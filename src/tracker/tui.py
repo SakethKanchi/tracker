@@ -1,23 +1,28 @@
-"""Rich table rendering for `tracker list` — THE all-accounts dashboard."""
+"""Compact tree-style rendering with inline progress bars — cswap-inspired.
+
+One account header, then indented lines with ├/└ connectors. Each utilization
+window gets a 20-char bar (█/░) colored by severity. Far more compact than a
+rich Table: a 3-window Claude account takes 4 lines, not a 6-row table cell.
+"""
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timezone
 
 from rich.console import Console
-from rich.table import Table
 from rich.text import Text
 
 from .usage import AccountUsage
 
 console = Console()
 
+BAR_WIDTH = 20
+
 
 def _age_str(fetched_at: float | None) -> str:
     if not fetched_at:
-        return "—"
+        return ""
     delta = time.time() - fetched_at
     if delta < 60:
         return f"{delta:.0f}s ago"
@@ -27,14 +32,13 @@ def _age_str(fetched_at: float | None) -> str:
 
 
 def _reset_str(resets_at: str | None) -> str:
-    """Format an ISO reset timestamp as a relative countdown."""
     if not resets_at:
         return ""
     try:
         dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
         delta = dt.timestamp() - time.time()
         if delta <= 0:
-            return "reset now"
+            return "resets now"
         h = int(delta // 3600)
         m = int((delta % 3600) // 60)
         if h > 0:
@@ -44,155 +48,197 @@ def _reset_str(resets_at: str | None) -> str:
         return ""
 
 
-def _pct_text(pct: float | None) -> Text:
-    """Color-code a utilization percentage."""
+def _pct_color(pct: float) -> str:
+    if pct >= 90:
+        return "bold red"
+    if pct >= 75:
+        return "yellow"
+    if pct >= 50:
+        return "green"
+    return "cyan"
+
+
+def _bar(pct: float | None) -> Text:
+    """A 20-char progress bar followed by the percentage."""
     if pct is None:
         return Text("—", style="dim")
-    styled = Text(f"{pct:.0f}%")
-    if pct >= 90:
-        styled.stylize("bold red")
-    elif pct >= 75:
-        styled.stylize("yellow")
-    elif pct >= 50:
-        styled.stylize("green")
-    else:
-        styled.stylize("cyan")
-    return styled
+    filled = int(round(pct / 100 * BAR_WIDTH))
+    filled = max(0, min(BAR_WIDTH, filled))
+    bar = "█" * filled + "░" * (BAR_WIDTH - filled)
+    return Text.assemble(
+        (bar, _pct_color(pct)),
+        (f" {pct:>3.0f}%", _pct_color(pct)),
+    )
 
 
-def _claude_usage_cell(au: AccountUsage) -> Text:
-    """Build the usage text for a Claude account."""
+def _format_windows_claude(au: AccountUsage) -> list[Text]:
+    """Build the indented ├/└ lines for a Claude account's windows."""
     if au.needs_relogin:
-        return Text("re-login needed", style="bold red")
+        return [Text("  re-login needed — refresh token dead", style="bold red")]
 
     if not au.windows:
         if au.error:
-            return Text(au.error, style="red")
-        return Text("no data", style="dim")
+            return [Text(f"  {au.error}", style="red")]
+        return [Text("  no data", style="dim")]
 
     w = au.windows
-    parts: list[Text] = []
+    lines: list[tuple[str, Text]] = []  # (label, bar_text)
 
-    h5 = w.get("five_hour")
-    if h5:
-        parts.append(Text("5h: "))
-        parts.append(_pct_text(h5.get("pct")))
-        reset = _reset_str(h5.get("resets_at"))
-        if reset:
-            parts.append(Text(f" ({reset})", style="dim"))
-        parts.append(Text("  "))
+    for label, key in (("5h", "five_hour"), ("7d", "seven_day")):
+        win = w.get(key)
+        if not win:
+            continue
+        pct = win.get("pct")
+        suffix = _reset_str(win.get("resets_at"))
+        bar = _bar(pct)
+        if suffix:
+            bar.append(f"  {suffix}", style="dim")
+        lines.append((label, bar))
 
-    d7 = w.get("seven_day")
-    if d7:
-        parts.append(Text("7d: "))
-        parts.append(_pct_text(d7.get("pct")))
-        reset = _reset_str(d7.get("resets_at"))
-        if reset:
-            parts.append(Text(f" ({reset})", style="dim"))
+    for s in w.get("scoped") or []:
+        pct = s.get("pct")
+        suffix = _reset_str(s.get("resets_at"))
+        bar = _bar(pct)
+        if suffix:
+            bar.append(f"  {suffix}", style="dim")
+        name = s["name"]
+        if len(name) > 6:
+            name = name[:4] + ".."
+        lines.append((name, bar))
 
-    # Scoped windows (per-model limits like Fable)
-    scoped = w.get("scoped")
-    if scoped and isinstance(scoped, list):
-        for s in scoped:
-            parts.append(Text(f"\n  {s['name']}: "))
-            parts.append(_pct_text(s.get("pct")))
-
-    # Spend (pay-as-you-go)
+    # Spend line
     spend = w.get("spend")
     if spend:
-        parts.append(Text(
-            f"\n  spend: ${spend['used']:.2f}/${spend['limit']:.2f} ({spend['pct']:.0f}%)",
+        lines.append(("$$", Text(
+            f" ${spend['used']:.2f} / ${spend['limit']:.2f} ({spend['pct']:.0f}%)",
             style="magenta",
-        ))
+        )))
 
-    return Text.assemble(*parts) if parts else Text("no windows", style="dim")
+    return _format_tree_lines(lines)
 
 
-def _grok_usage_cell(au: AccountUsage) -> Text:
-    """Build the usage text for a Grok account (derived, no live API)."""
+def _format_windows_grok(au: AccountUsage) -> list[Text]:
+    """Build the indented lines for a Grok account's derived usage."""
     if au.error:
-        return Text(au.error, style="red")
-
+        return [Text(f"  {au.error}", style="red")]
     if not au.windows:
-        return Text("no data", style="dim")
+        return [Text("  no data", style="dim")]
 
     w = au.windows
-    parts: list[Text] = []
-
     total_in = w.get("total_input", 0)
     total_out = w.get("total_output", 0)
     total_cost = w.get("total_cost", 0)
     sessions = w.get("session_count", 0)
 
-    parts.append(Text("tokens: "))
-    parts.append(Text(f"{total_in:,}", style="cyan"))
-    parts.append(Text(" in / "))
-    parts.append(Text(f"{total_out:,}", style="green"))
-    parts.append(Text(" out"))
-
-    parts.append(Text(f"\n  cost: ${total_cost:.4f}", style="magenta"))
-    parts.append(Text(f"\n  sessions: {sessions}", style="dim"))
+    lines: list[tuple[str, Text]] = [
+        ("tok", Text.assemble(
+            (f"{_fmt_tok(total_in)} in", "cyan"),
+            (" / ", "dim"),
+            (f"{_fmt_tok(total_out)} out", "green"),
+        )),
+        ("$$", Text(f" ${total_cost:.2f}  ({sessions} sessions)", style="magenta")),
+    ]
 
     rl = w.get("last_rate_limit")
     if rl:
-        parts.append(Text(f"\n  last throttle: {rl['kind']}", style="yellow"))
+        lines.append(("rl", Text(f" {rl['kind']}", style="yellow")))
 
     last = w.get("last_activity")
     if last:
-        parts.append(Text(f"\n  last active: {last[:19]}", style="dim"))
+        lines.append(("last", Text(f" {last[:10]}", style="dim")))
 
+    return _format_tree_lines(lines)
+
+
+def _fmt_tok(n: int) -> str:
+    """Format token counts compactly: 229M, 2.1M, 850K."""
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.0f}K"
+    return str(n)
+
+
+def _format_tree_lines(lines: list[tuple[str, Text]]) -> list[Text]:
+    """Format (label, content) pairs as ├/└ tree lines with padded labels."""
+    if not lines:
+        return []
+    pad = max(len(label) for label, _ in lines)
+    result: list[Text] = []
+    for i, (label, content) in enumerate(lines):
+        is_last = i == len(lines) - 1
+        connector = "└" if is_last else "├"
+        result.append(Text.assemble(
+            (f"  {connector} ", "dim"),
+            (f"{label:<{pad}} ", "dim"),
+            content,
+        ))
+    return result
+
+
+def _source_tag(au: AccountUsage) -> Text:
+    """Small colored source/age indicator after the account label."""
+    style = {
+        "api": "green",
+        "cached": "dim",
+        "backing-off": "yellow",
+        "derived": "blue",
+        "manual": "magenta",
+        "error": "red",
+        "no-data": "dim red",
+    }.get(au.source, "")
+    parts = [Text(au.source, style=style)]
+    age = _age_str(au.fetched_at)
+    if age:
+        parts.append(Text(f" · {age}", style="dim"))
     return Text.assemble(*parts)
 
 
 def render_accounts(results: list[AccountUsage]) -> None:
-    """Render the all-accounts usage dashboard to the console."""
+    """Render the all-accounts usage dashboard as a compact tree."""
     if not results:
-        console.print("[dim]No accounts added yet. Run:[/dim] tracker add <provider>")
+        console.print("[dim]No accounts added yet. Run:[/dim]  tracker add <provider>")
         return
 
-    table = Table(
-        title="Account Usage",
-        title_style="bold",
-        show_lines=True,
-        pad_edge=False,
-    )
-    table.add_column("Provider", style="dim", width=7)
-    table.add_column("Label", style="bold", min_width=10)
-    table.add_column("Email", style="dim", max_width=35)
-    table.add_column("Usage", ratio=1, overflow="fold")
-    table.add_column("Source", justify="right", width=11)
-    table.add_column("Age", justify="right", width=10)
-
+    # Group by provider
+    by_provider: dict[str, list[AccountUsage]] = {}
     for au in results:
-        if au.provider == "claude":
-            usage_cell = _claude_usage_cell(au)
-        else:
-            usage_cell = _grok_usage_cell(au)
+        by_provider.setdefault(au.provider, []).append(au)
 
-        # Source styling
-        src_style = {
-            "api": "bold green",
-            "cached": "dim",
-            "backing-off": "yellow",
-            "derived": "blue",
-            "manual": "magenta",
-            "error": "red",
-            "no-data": "dim red",
-        }.get(au.source, "")
-        source_cell = Text(au.source, style=src_style)
+    lines: list[Text] = []
+    provider_order = ["claude", "grok"]
+    for pi, provider in enumerate(provider_order):
+        accounts = by_provider.get(provider, [])
+        if not accounts:
+            continue
+        # Provider header
+        lines.append(Text.assemble(
+            (provider.capitalize(), "bold"),
+            (f"  ({len(accounts)})", "dim"),
+        ))
+        for ai, au in enumerate(accounts):
+            is_last_acct = (ai == len(accounts) - 1)
+            # Account header line
+            connector = "└" if is_last_acct else "├"
+            lines.append(Text.assemble(
+                (f"  {connector} ", "dim"),
+                (au.label, "bold"),
+                (f"  {au.email or ''}", "dim"),
+                ("  [", "dim"),
+                _source_tag(au),
+                ("]", "dim"),
+            ))
+            # Window lines (indented under the account)
+            if au.provider == "claude":
+                win_lines = _format_windows_claude(au)
+            else:
+                win_lines = _format_windows_grok(au)
+            for wl in win_lines:
+                lines.append(wl)
+        if pi < len(provider_order) - 1:
+            lines.append(Text(""))
 
-        age_cell = _age_str(au.fetched_at)
-
-        table.add_row(
-            au.provider.capitalize(),
-            au.label,
-            au.email or "—",
-            usage_cell,
-            source_cell,
-            age_cell,
-        )
-
-    console.print(table)
+    console.print(Text.assemble(*[Text("\n")] ) if not lines else Text("\n").join(lines))
 
 
 def render_status(results: list[AccountUsage]) -> None:
@@ -204,7 +250,6 @@ def render_status(results: list[AccountUsage]) -> None:
     parts.append(f"{len(claude_accts)} Claude")
     parts.append(f"{len(grok_accts)} Grok")
 
-    # Quick aggregate: highest Claude 7d usage
     max_7d: float | None = None
     relogin_count = sum(1 for r in claude_accts if r.needs_relogin)
     for r in claude_accts:
@@ -221,35 +266,40 @@ def render_status(results: list[AccountUsage]) -> None:
 
 
 def render_tokens(rows: list, since: str | None = None) -> None:
-    """Render historical token-usage report from store.token_usage_since."""
+    """Render historical token-usage report."""
     if not rows:
         console.print("[dim]No token usage recorded yet.[/dim]")
         return
 
-    table = Table(title="Token Usage Report", show_lines=True, pad_edge=False)
-    table.add_column("Provider", style="dim", width=7)
-    table.add_column("Session", style="dim", max_width=36)
-    table.add_column("Date", width=20)
-    table.add_column("Model", max_width=20)
-    table.add_column("In", justify="right")
-    table.add_column("Out", justify="right")
-    table.add_column("Cache", justify="right")
-    table.add_column("Cost", justify="right", style="magenta")
-
-    # Flatten rows — they come from token_usage table joined or not
-    # rows is a list of sqlite3.Row
+    # Aggregate by session for compactness
+    from collections import defaultdict
+    by_session: dict[str, dict] = defaultdict(lambda: {
+        "input": 0, "output": 0, "cache": 0, "cost": 0.0, "model": "", "ts": 0
+    })
     for row in rows:
-        ts = row["ts"]
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-        table.add_row(
-            row["model"] or "—",
-            "",  # session shortened
-            dt,
-            row["model"] or "—",
-            f"{row['input_tokens'] or 0:,}",
-            f"{row['output_tokens'] or 0:,}",
-            f"{row['cache_tokens'] or 0:,}",
-            f"${row['cost_estimate'] or 0:.4f}",
-        )
+        sid = row["session_id"]
+        s = by_session[sid]
+        s["input"] += row["input_tokens"] or 0
+        s["output"] += row["output_tokens"] or 0
+        s["cache"] += row["cache_tokens"] or 0
+        s["cost"] += row["cost_estimate"] or 0
+        if row["model"]:
+            s["model"] = row["model"]
+        if row["ts"] > s["ts"]:
+            s["ts"] = row["ts"]
 
-    console.print(table)
+    console.print(f"[bold]Token Usage[/bold]  [dim]({len(by_session)} sessions"
+                  + (f" since {since}" if since else "") + ")[/dim]\n")
+
+    for sid, s in sorted(by_session.items(), key=lambda x: -x[1]["ts"]):
+        dt = datetime.fromtimestamp(s["ts"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+        console.print(Text.assemble(
+            (f"  ├ {dt}  ", "dim"),
+            (f"{s['model']:<18}", "cyan"),
+            ("  ", ""),
+            (f"{_fmt_tok(s['input'])} in", "cyan"),
+            (" / ", "dim"),
+            (f"{_fmt_tok(s['output'])} out", "green"),
+            ("  ", ""),
+            (f"${s['cost']:.2f}", "magenta"),
+        ))
