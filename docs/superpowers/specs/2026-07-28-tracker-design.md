@@ -13,10 +13,23 @@ and logging out — repeated across providers. This is slow and error-prone.
 
 ## Goal
 
-One local tool that imports every account's credentials, fetches/derives
-each account's usage in a single pass, and presents all of them in one
-dashboard — so "which account has quota left?" is a single command, not a
-login/logout ritual.
+One local tool that imports every account's credentials, and whose **primary
+command** — `tracker list` — shows the current usage of *every* account across
+both providers in a single pass, each row labeled with its account. "Which
+account has quota left?" becomes one command, not a login/logout ritual
+repeated per account.
+
+**Freshness model (refresh-if-stale, else cache):** `tracker list` displays
+each account immediately. Per account, if its last sample is older than the
+serve TTL (a few minutes), a network refresh runs *for that account* before
+its row renders — so successive runs converge to a fully-fresh snapshot
+without a separate "fetch" step, while staying polite to Claude's per-token
+usage-request budget. A per-token 429 backoff means an account that just got
+throttled keeps showing its last-known windows until the backoff lifts, rather
+than re-hammering the budget. `--refresh` (or `tracker sync`) forces a full
+network pass. The command *always* renders a row for every account — fresh,
+cached, or last-known-during-backoff — so "see everything at once" never
+degrades to "see the accounts that happened to be fetchable."
 
 **Scope decision:** the tracker is **read-only observability**. It does not
 mutate the active credential the CLIs read, and it does not run an auto-switch
@@ -56,7 +69,7 @@ store (`tracker switch` + a daemon) without a data-layer rewrite.
   2. **Rate-limit capture** from observed use (grok `--debug-file` / session
      logs): record when an account last got throttled.
   3. **Manual entry fallback** (`tracker log grok <label> ...`): the user can
-     punch in a eyeballed `--msgs`/`--resets-in` value; stored as a synthetic
+     punch in an eyeballed `--msgs`/`--resets-in` value; stored as a synthetic
      `usage_sample` so it still charts alongside the rest.
 
 ### Prior art
@@ -85,7 +98,7 @@ tracker/
     providers/
       claude.py       # refresh + GET /api/oauth/usage + profile; parse windows
       grok.py         # refresh OIDC + parse session transcripts + capture rate-limits
-    usage.py          # provider-agnostic "collect one account" dispatch
+    usage.py          # provider-agnostic "collect one account" dispatch + backoff state
     tui.py            # Textual dashboard (phase 1)
     web/              # FastAPI + UI (phase 2, same store)
   docs/superpowers/specs/2026-07-28-tracker-design.md
@@ -115,6 +128,11 @@ tracker/
 - **`rate_limit_events`** — Grok (and any provider) throttle signals:
   `account_id`, `ts`, `kind` ('429'|'in-message'|'window'), `message`,
   `retry_after`.
+- **`fetch_state`** — per-account collection bookkeeping for the refresh-if-
+  stale model: `account_id` PK, `last_attempt_at`, `consecutive_failures`,
+  `backoff_until`, `last_429_at`. Mirrors cswap's `usage_store` row so a 429'd
+  token isn't probed again until its backoff lifts (bounded by an hour-scale
+  window), while still serving `last_good` from `usage_samples`.
 
 ## Credential management
 
@@ -128,39 +146,55 @@ this avoids reimplementing Google OAuth ourselves.
   this reads `~/.grok/auth.json`, stores it, reads `email`/`user_id`/`tier`
   from the blob, prompts for a `label`.
 - **`tracker remove <label>`** — delete the credential file + DB row.
-- **Refresh:** provider-specific, runs at `sync` time when `expiresAt` is near
+- **Refresh:** provider-specific, runs at refresh time when `expiresAt` is near
   the buffer window. Dead refresh tokens (HTTP 400/401/403 + `invalid_grant`
   in body) are quarantined with a `relogin-needed` sentinel and not retried
   until the user re-logins and re-runs `tracker add <provider>`.
 
-## Usage collection (`tracker sync`)
+## Usage collection
 
-For each account (or one via `--label`):
-1. Refresh token if near expiry.
-2. **Claude:** `GET /api/oauth/usage` → parse windows → write a
-   `usage_samples` row (`source='api'`). On 429, honor `Retry-After`, record
-   the event, keep last_good until window reset.
-3. **Grok:** parse freshly-changed session transcripts since last sync →
-   append `token_usage` rows; scan debug/session logs for rate-limit signals →
-   append `rate_limit_events`. No live `/usage` call exists.
-4. Manual fallback: `tracker log grok <label> --msgs 23 --resets-in 1h`
-   writes a synthetic `usage_samples` row (`source='manual'`).
+`tracker list` is the primary path. For each account it decides, per-account,
+whether a network refresh is eligible this run:
 
-Poll cadence is on-demand (`tracker sync`) — no background daemon in phase 1.
-A later `--watch`/TUI-live mode can add adaptive polling (per-token backoff)
-like cswap's `poll_policy`.
+1. If `fetch_state.backoff_until` is in the future → serve `last_good` from
+   `usage_samples` with an "age / backing off" note. No network call.
+2. Else if the account's newest `usage_samples` row is younger than the serve
+   TTL (default ~5 min) → serve it as-is. No network call.
+3. Else run the provider's collector:
+   - **Claude:** refresh token if near expiry → `GET /api/oauth/usage` → parse
+     windows → write a `usage_samples` row (`source='api'`). On 429, honor
+     `Retry-After`, write `fetch_state` (`last_429_at`, `backoff_until`), record
+     a `rate_limit_event`, and serve `last_good` (which stays a valid lower
+     bound until its window `resets_at`).
+   - **Grok:** parse newly-changed session transcripts since last collection →
+     append `token_usage` rows; scan debug/session logs for rate-limit signals →
+     append `rate_limit_events`. No live `/usage` call exists, so Grok rows
+     render from the latest derived `usage_sample` (plus manual entries).
+4. Every account renders a row regardless of which branch it took.
+
+Separate from the per-account-by-default behavior above:
+
+- **`tracker sync`** forces a network/parse pass for all (or `--label`) accounts
+  regardless of TTL/backoff — the "I know it's recent, refresh anyway" path.
+- **Manual fallback:** `tracker log <provider> <label> --msgs N --resets-in HhMm`
+  writes a synthetic `usage_samples` row (`source='manual'`). Primary use is Grok
+  (no live API), but the command works for either provider.
+
+No background daemon in phase 1. A later `--watch` / TUI-live mode can add
+adaptive polling (per-token AIMD backoff) like cswap's `poll_policy`.
 
 ## Commands (phase 1)
 
 | Command | Effect |
 |---|---|
-| `tracker add <provider>` | import live credential from the CLI's config dir |
-| `tracker list` / bare `tracker` | TUI dashboard: every account, 5h/7d% + reset (Claude), last tokens + throttle status (Grok) |
-| `tracker sync [--all\|<label>]` | refresh tokens + fetch usage / parse transcripts |
-| `tracker tokens [--since] [--provider]` | historical token/cost report across providers |
-| `tracker status` | one-line aggregate |
-| `tracker remove <label>` | drop an account |
-| `tracker log <provider> <label> --msgs N --resets-in HhMm` | manual usage entry (Grok fallback) |
+| `tracker list` (default) | **Primary command.** Shows every account's current usage at once — Claude 5h/7d % + reset, Grok last-derived + throttle status — refreshing each account per-account only when stale (and honoring 429 backoff). Always renders a row per account. |
+| `tracker add <provider>` | import live credential from the CLI's config dir; resolve identity; prompt for label |
+| `tracker sync [--all\|<label>]` | force-refresh: network/parse pass regardless of TTL/backoff |
+| `tracker list --refresh` | same as `tracker list` but force-refresh every account first (shortcut for `tracker sync` + `tracker list`) |
+| `tracker tokens [--since] [--provider]` | historical token/cost report across providers (ccusage-style) |
+| `tracker status` | one-line aggregate summary |
+| `tracker remove <label>` | drop an account (credential file + DB row) |
+| `tracker log <provider> <label> --msgs N --resets-in HhMm` | manual usage entry (Grok fallback, works for either) |
 
 ## What is deliberately NOT in phase 1
 
@@ -168,7 +202,7 @@ like cswap's `poll_policy`.
   is a later phase that reuses this credential store (`tracker switch` + a
   daemon); no data-layer rewrite needed.
 - **No web dashboard.** Phase 2 mounts FastAPI on the same SQLite store.
-- **No background polling daemon.** `tracker sync` is on-demand.
+- **No background polling daemon.** `tracker list` is on-demand, adpative per-account.
 - **No reimplementing Google OAuth.** Login is delegated to the CLIs; importer.
 
 ## Risks / open questions
@@ -182,5 +216,7 @@ like cswap's `poll_policy`.
   client's own code/config before implementation (the `auth.json` carries
   `oidc_issuer` and `oidc_client_id` — use those).
 - **Usage-endpoint 429 budget:** Claude's usage endpoint throttles
-  per-access-token non-first-party User-Agents. Keep `sync` cadence modest,
-  honor `Retry-After`, and never let a throttle blank last_good until reset.
+  per-access-token non-first-party User-Agents. The refresh-if-stale model plus
+  `fetch_state` backoff keeps probing within the budget; never blank `last_good`
+  on a throttle until the window resets, and never let `Retry-After` park an
+  account unbounded (cap at one rolling window).
