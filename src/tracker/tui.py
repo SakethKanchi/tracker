@@ -21,6 +21,7 @@ BAR_WIDTH = 20
 
 
 def _age_str(fetched_at: float | None) -> str:
+    """How long ago the sample was fetched: '3s', '45m', '3h', '1.2d'."""
     if not fetched_at:
         return ""
     delta = time.time() - fetched_at
@@ -28,10 +29,13 @@ def _age_str(fetched_at: float | None) -> str:
         return f"{delta:.0f}s ago"
     if delta < 3600:
         return f"{delta/60:.0f}m ago"
-    return f"{delta/3600:.1f}h ago"
+    if delta < 86400:
+        return f"{delta/3600:.0f}h ago"
+    return f"{delta/86400:.1f}d ago"
 
 
 def _reset_str(resets_at: str | None) -> str:
+    """Time until the usage window resets: '45m', '20h50m', '5d17h'."""
     if not resets_at:
         return ""
     try:
@@ -41,6 +45,9 @@ def _reset_str(resets_at: str | None) -> str:
             return "resets now"
         h = int(delta // 3600)
         m = int((delta % 3600) // 60)
+        d = h // 24
+        if d > 0:
+            return f"resets in {d}d{h - d * 24}h"
         if h > 0:
             return f"resets in {h}h{m}m"
         return f"resets in {m}m"

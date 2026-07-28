@@ -12,6 +12,9 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+bot = ["discord.py>=2.4"]
+
 [project.scripts]
 tracker = "tracker.cli:main"
 

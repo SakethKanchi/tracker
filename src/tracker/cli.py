@@ -251,6 +251,12 @@ def cmd_log(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bot(args: argparse.Namespace) -> int:
+    """Run the Discord dashboard bot (blocking)."""
+    from . import bot
+    return bot.run_bot()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tracker",
@@ -282,7 +288,6 @@ def build_parser() -> argparse.ArgumentParser:
     # remove
     p_remove = sub.add_parser("remove", help="drop an account")
     p_remove.add_argument("label")
-
     # log
     p_log = sub.add_parser("log", help="manual usage entry (Grok fallback)")
     p_log.add_argument("provider", choices=["claude", "grok"])
@@ -290,6 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--msgs", type=int, help="message count")
     p_log.add_argument("--resets-in", help="reset duration, e.g. '1h30m'")
     p_log.add_argument("--tokens", type=int, help="total tokens used")
+
+    # bot
+    sub.add_parser("bot", help="run the Discord dashboard bot")
 
     return parser
 
@@ -310,13 +318,13 @@ def main() -> int:
         "status": cmd_status,
         "remove": cmd_remove,
         "log": cmd_log,
+        "bot": cmd_bot,
     }
     handler = handlers.get(args.command)
     if not handler:
         parser.print_help()
         return 1
     return handler(args)
-
 
 if __name__ == "__main__":
     sys.exit(main())

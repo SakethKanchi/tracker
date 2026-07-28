@@ -233,6 +233,33 @@ def collect_all(conn: Any, force: bool = False) -> list[AccountUsage]:
     results.sort(key=lambda r: (r.provider, r.label))
     return results
 
+def read_cached_all(conn: Any) -> list[AccountUsage]:
+    """Return the latest stored sample for every account — zero network I/O.
+
+    Used by the Discord bot's `/usage` slash command so the initial response is
+    always instant. Staleness is visible via ``fetched_at`` / `_age_str`; the
+    refresh button is the explicit live-sync trigger.
+    """
+    accounts = store.list_accounts(conn)
+    results: list[AccountUsage] = []
+    for account in accounts:
+        latest = store.latest_usage_sample(conn, account["id"])
+        if latest:
+            results.append(AccountUsage(
+                account["id"], account["provider"], account["label"],
+                account["email"], account["tier"],
+                json.loads(latest["windows"]), "cached",
+                latest["fetched_at"], None, False,
+            ))
+        else:
+            results.append(AccountUsage(
+                account["id"], account["provider"], account["label"],
+                account["email"], account["tier"], None,
+                "no-data", None, None, False,
+            ))
+    results.sort(key=lambda r: (r.provider, r.label))
+    return results
+
 
 def collect_one(conn: Any, label: str, force: bool = True) -> AccountUsage | None:
     """Force-collect a single account by label. Used by `tracker sync <label>`."""
