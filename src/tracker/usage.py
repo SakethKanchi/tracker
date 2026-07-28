@@ -170,22 +170,37 @@ def _collect_grok(account: Any, conn: Any, force: bool = False) -> AccountUsage:
     # Derive summary from all token_usage
     windows = grok.derive_usage_summary(conn, acct_id)
 
-    # Check live quota status via api.x.ai/v1/models
+    # Live signal: billing endpoint gives the weekly credit usage % (the same
+    # bar grok.com shows). Falls back to v1/models for a blocked reason when
+    # billing is unreachable.
     cred_blob = credentials.read_credential(acct_id)
     if cred_blob:
         access_token = cred_blob.get("key") or cred_blob.get("access_token")
         if access_token:
-            quota = grok.check_live_quota(access_token)
-            windows["quota_status"] = quota["status"]
-            if quota["status"] == "blocked":
-                windows["quota_reason"] = quota.get("reason", "")
-                windows["quota_message"] = quota.get("message", "")
-                store.insert_rate_limit_event(
-                    conn, account_id=acct_id,
-                    kind=quota.get("reason", "blocked"),
-                    message=quota.get("message"),
-                )
+            billing = grok.fetch_credit_usage(access_token)
+            if billing and billing["credit_usage_pct"] is not None:
+                windows["credit_usage_pct"] = billing["credit_usage_pct"]
+                windows["billing_period_end"] = billing["period_end"]
+                if billing["product_usage"]:
+                    windows["product_usage"] = billing["product_usage"]
 
+            # If usage is pinned at 100 OR billing failed, ask v1/models for
+            # the structured blocked reason (gives the friendly "out of credits"
+            # message).
+            pct = windows.get("credit_usage_pct")
+            if pct is None or pct >= 100:
+                quota = grok.check_live_quota(access_token)
+                windows["quota_status"] = quota["status"]
+                if quota["status"] == "blocked":
+                    windows["quota_reason"] = quota.get("reason", "")
+                    windows["quota_message"] = quota.get("message", "")
+                    store.insert_rate_limit_event(
+                        conn, account_id=acct_id,
+                        kind=quota.get("reason", "blocked"),
+                        message=quota.get("message"),
+                    )
+            else:
+                windows["quota_status"] = "active"
     store.insert_usage_sample(conn, account_id=acct_id, source="derived", windows=windows)
 
     return AccountUsage(

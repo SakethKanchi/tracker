@@ -299,3 +299,53 @@ def check_live_quota(access_token: str, timeout: float = 5.0) -> dict[str, Any]:
         return {"status": "error", "reason": f"http-{e.code}"}
     except Exception as e:
         return {"status": "error", "reason": "network"}
+
+def fetch_credit_usage(access_token: str, timeout: float = 5.0) -> dict[str, Any] | None:
+    """Fetch live credit usage from the cli-chat-proxy billing endpoint.
+
+    This is the same percentage Grok shows in its own UI: the weekly
+    SuperGrok credit window. The endpoint is
+    ``https://cli-chat-proxy.grok.com/v1/billing?format=credits`` and returns:
+
+      {"config": {
+        "currentPeriod": {"start", "end", "type": "...WEEKLY"},
+        "creditUsagePercent": float,     # 0-100, percent USED
+        "productUsage": [{"product": "GrokBuild", "usagePercent": float}],
+        "isUnifiedBillingUser": bool,
+        "prepaidBalance": {"val": int},
+      }}
+
+    Returns None on any failure so the caller falls back to transcript data.
+    """
+    import urllib.request
+    import urllib.error
+
+    url = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "grok-cli/0.2.112",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        logger.debug("grok billing http-%s: %s", e.code, e.read()[:200])
+        return None
+    except Exception as e:
+        logger.debug("grok billing network: %s", e)
+        return None
+
+    cfg = data.get("config") or {}
+    period = cfg.get("currentPeriod") or {}
+    products = [
+        {"product": p.get("product"), "usage_pct": p.get("usagePercent")}
+        for p in (cfg.get("productUsage") or [])
+    ]
+    return {
+        "credit_usage_pct": cfg.get("creditUsagePercent"),
+        "period_start": period.get("start"),
+        "period_end": period.get("end"),
+        "product_usage": products,
+    }

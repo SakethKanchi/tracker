@@ -120,10 +120,10 @@ def _format_windows_claude(au: AccountUsage) -> list[Text]:
 def _format_windows_grok(au: AccountUsage) -> list[Text]:
     """Build the indented lines for a Grok account's usage.
 
-    Grok has no per-account live usage % (no Claude-style 5h/7d windows).
-    The primary signal is the live quota check via api.x.ai/v1/models:
-    active (200) or blocked (403). Transcript-derived token stats are
-    session-global and not shown per-account to avoid misrepresentation.
+    (``/v1/billing?format=credits``), which returns ``creditUsagePercent`` for
+    the weekly SuperGrok credit window — the same percentage grok.com's UI
+    shows. When billing is unreachable we fall back to the binary
+    active/blocked flag from ``api.x.ai/v1/models``.
     """
     if au.error:
         return [Text(f"  {au.error}", style="red")]
@@ -133,28 +133,37 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
     w = au.windows
     lines: list[tuple[str, Text]] = []
 
-    # Live quota status — this is the real per-account signal
-    quota = w.get("quota_status")
-    tier = au.tier
-    tier_str = f"tier {tier}  " if tier else ""
+    credit_pct = w.get("credit_usage_pct")
+    if credit_pct is not None:
+        # The weekly SuperGrok credit window — the main bar grok.com shows.
+        bar = _bar(credit_pct)
+        reset = _reset_str(w.get("billing_period_end"))
+        if reset:
+            bar.append(f"  {reset}", style="dim")
+        lines.append(("wk", bar))
 
+        # Per-product bars only add signal when there's more than one product;
+        # with a single product (the common case) it duplicates the weekly bar.
+        products = w.get("product_usage") or []
+        if len(products) > 1:
+            for p in products:
+                name = (p.get("product") or "?").lower()
+                # "grokbuild" -> "build"; generic fallback: first 6 chars
+                label = "build" if "build" in name else name[:6]
+                pct = p.get("usage_pct")
+                if pct is not None:
+                    lines.append((label, _bar(pct)))
+
+    # Actionable blocked hint — only when v1/models confirmed the block.
+    quota = w.get("quota_status")
     if quota == "blocked":
         msg = w.get("quota_message", w.get("quota_reason", ""))
-        lines.append(("", Text.assemble(
-            (tier_str, "dim"),
-            ("no quota", "bold red"),
-            (f"  {msg}" if msg else "", "red"),
-        )))
-    elif quota == "active":
-        lines.append(("", Text.assemble(
-            (tier_str, "dim"),
-            ("has quota", "green"),
-        )))
-    else:
-        lines.append(("", Text.assemble(
-            (tier_str, "dim"),
-            ("status unknown", "yellow"),
-        )))
+        parts: list[tuple[str, str]] = [("no quota", "bold red")]
+        if msg:
+            parts.append((f"  {msg}", "red"))
+        lines.append(("qta", Text.assemble(*parts)))
+    elif quota == "active" and credit_pct is None:
+        lines.append(("qta", Text("has quota", style="green")))
 
     # Last activity (from transcript parsing)
     last = w.get("last_activity")
@@ -247,6 +256,8 @@ def render_accounts(results: list[AccountUsage]) -> None:
             )
             if au.email and au.email != au.label:
                 header.append(Text(f"  {au.email}", style="dim"))
+            if au.tier:
+                header.append(Text(f"  t{au.tier}", style="dim"))
             header.append(Text("  [", style="dim"))
             header.append(_source_tag(au))
             header.append(Text("]", style="dim"))
