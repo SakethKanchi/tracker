@@ -251,10 +251,10 @@ def cmd_log(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_bot(args: argparse.Namespace) -> int:
-    """Run the Discord dashboard bot (blocking)."""
+def cmd_webhook(args: argparse.Namespace) -> int:
+    """Run the Discord webhook poller (blocking)."""
     from . import bot
-    return bot.run_bot()
+    return bot.run_webhook(once=args.once)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -296,8 +296,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--resets-in", help="reset duration, e.g. '1h30m'")
     p_log.add_argument("--tokens", type=int, help="total tokens used")
 
-    # bot
-    sub.add_parser("bot", help="run the Discord dashboard bot")
+    # webhook
+    p_webhook = sub.add_parser("webhook", help="run the Discord webhook poller")
+    p_webhook.add_argument("--once", action="store_true", help="post/update once and exit")
 
     return parser
 
@@ -317,8 +318,7 @@ def main() -> int:
         "tokens": cmd_tokens,
         "status": cmd_status,
         "remove": cmd_remove,
-        "log": cmd_log,
-        "bot": cmd_bot,
+        "webhook": cmd_webhook,
     }
     handler = handlers.get(args.command)
     if not handler:

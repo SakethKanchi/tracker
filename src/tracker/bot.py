@@ -1,22 +1,26 @@
-"""Discord dashboard bot — read-only usage via one slash command + refresh button.
+"""Discord webhook dashboard — posts live usage to a channel on a schedule.
 
-Surface:
-  /usage        → instant embed built from the latest stored SQLite sample
-  [⟳ Refresh]  → forces a real sync (Claude API + Grok billing) and edits the embed
+Posts the full Claude + Grok usage dashboard to a Discord channel via webhook,
+then edits that same message on each sync cycle. No bot token, no gateway
+WebSocket, no discord.py dependency — just urllib POST/PATCH against the
+Discord webhook REST API.
 
-Hosting: same machine as tracker (reads the same store + credential files).
-Access:  single owner (owner_id in ~/.config/tracker/discord.json).
+  tracker webhook          # run the poller (blocking)
+  tracker webhook --once   # post/update once and exit
 
-This module imports ``discord`` lazily so the CLI stays light; the optional
-``[bot]`` extra declares ``discord.py>=2.4``.
+Config: ~/.config/tracker/webhook.json (0600):
+  {"url": "https://discord.com/api/webhooks/...", "interval_sec": 300}
+
+Deploy: systemd user service at ~/.config/systemd/user/tracker-bot.service.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
+import signal
+import sys
 import time
 from pathlib import Path
 
@@ -25,33 +29,19 @@ from .tui import BAR_WIDTH, _age_str, _reset_str
 
 logger = logging.getLogger("tracker")
 
-# ANSI 24-bit is flaky across Discord clients; we render plain unicode bars in a
-# normal code block. Severity is conveyed by the embed's side color instead.
-_EMBED_COLOR = {  # worst-account severity → embed color
+DEFAULT_INTERVAL_SEC = 300  # 5 minutes
+
+_EMBED_COLOR = {
     "green":  0x2ECC71,
     "yellow": 0xF1C40F,
     "red":    0xE74C3C,
     "dim":    0x95A5A6,
 }
 
-REFRESH_BUTTON_ID = "tracker:refresh"
 
-
-def _config_path() -> Path:
-    return paths.config_dir() / "discord.json"
-
-
-def _ensure_discord() -> None:
-    """Import discord on demand; raise with an install hint if missing."""
-    try:
-        import discord  # noqa: F401
-        from discord import app_commands  # noqa: F401
-    except ImportError as e:
-        raise SystemExit(
-            "discord.py is not installed. Install the bot extra:\n"
-            "    uv tool install --force -e \".[bot]\""
-        ) from e
-
+# ── rendering ──────────────────────────────────────────────────────────────
+# Same plain-bar rendering as the interactive bot; shared so the webhook
+# dashboard looks identical to what the slash command would have shown.
 
 def _severity(pct: float | None, blocked: bool) -> str:
     if blocked:
@@ -63,6 +53,10 @@ def _severity(pct: float | None, blocked: bool) -> str:
     if pct >= 75:
         return "yellow"
     return "green"
+
+
+def _sev_rank(s: str) -> int:
+    return {"dim": 0, "green": 1, "yellow": 2, "red": 3}.get(s, 0)
 
 
 def _plain_bar(pct: float | None) -> str:
@@ -152,11 +146,9 @@ def _render_account_block(au: usage.AccountUsage) -> tuple[str, str]:
     return header, "\n".join(lines)
 
 
-def _build_embed(results: list[usage.AccountUsage]) -> tuple[str, int]:
+def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
     """Return (code_block_text, embed_color) for the full dashboard."""
-    # Worst severity across all accounts drives the embed color.
     worst = "dim"
-    pct_for_severity: float | None = None
     for au in results:
         if au.provider == "claude":
             if au.needs_relogin:
@@ -184,7 +176,6 @@ def _build_embed(results: list[usage.AccountUsage]) -> tuple[str, int]:
             if _sev_rank(sv) > _sev_rank(worst):
                 worst = sv
 
-    # Group + render
     by_provider: dict[str, list[usage.AccountUsage]] = {}
     for au in results:
         by_provider.setdefault(au.provider, []).append(au)
@@ -206,148 +197,169 @@ def _build_embed(results: list[usage.AccountUsage]) -> tuple[str, int]:
     return text, _EMBED_COLOR.get(worst, _EMBED_COLOR["dim"])
 
 
-def _sev_rank(s: str) -> int:
-    return {"dim": 0, "green": 1, "yellow": 2, "red": 3}.get(s, 0)
-
-
 def _newest_fetched_at(results: list[usage.AccountUsage]) -> float | None:
     ts = [au.fetched_at for au in results if au.fetched_at]
     return max(ts) if ts else None
 
 
-def run_bot() -> int:
-    """Start the Discord gateway client. Blocks until interrupted."""
-    _ensure_discord()
-    import discord
-    from discord import app_commands
+# ── Discord webhook REST ────────────────────────────────────────────────────
 
+def _config_path() -> Path:
+    return paths.config_dir() / "webhook.json"
+
+
+def _load_config() -> dict | None:
     cfg_path = _config_path()
     if not cfg_path.exists():
         print(f"Missing {cfg_path}. Create it with:\n"
-              f'  {{"token": "...", "owner_id": <your_discord_id>, '
-              f'"guild_id": <your_guild_id>}}')
-        return 1
+              f'  {{"url": "https://discord.com/api/webhooks/...", '
+              f'"interval_sec": 300}}')
+        return None
     try:
         cfg = json.loads(cfg_path.read_text())
     except json.JSONDecodeError as e:
         print(f"Invalid JSON in {cfg_path}: {e}")
+        return None
+    if not cfg.get("url"):
+        print(f"{cfg_path} must set 'url'.")
+        return None
+    return cfg
+
+
+def _build_payload(results: list[usage.AccountUsage]) -> dict:
+    """Build the Discord webhook message payload."""
+    text, color = _build_text(results)
+    newest = _newest_fetched_at(results)
+    age = _age_str(newest) or "never"
+    return {
+        "embeds": [{
+            "description": f"```\n{text}\n```",
+            "color": color,
+            "footer": {"text": f"updated {age} · auto-refresh every {DEFAULT_INTERVAL_SEC // 60}m"},
+        }],
+    }
+
+
+def _post_message(url: str, payload: dict, timeout: float = 10.0) -> str | None:
+    """POST a new message; return the message ID, or None on failure."""
+    import urllib.request
+    import urllib.error
+
+    api_url = url + "?wait=true"  # wait=true returns the message object
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(api_url, data=data, method="POST", headers={
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode())
+            return body.get("id")
+    except urllib.error.HTTPError as e:
+        logger.error("webhook POST http-%s: %s", e.code, e.read()[:300])
+        return None
+    except Exception as e:
+        logger.error("webhook POST: %s", e)
+        return None
+
+
+def _patch_message(url: str, message_id: str, payload: dict,
+                   timeout: float = 10.0) -> bool:
+    """Edit an existing webhook message by ID."""
+    import urllib.request
+    import urllib.error
+
+    # Extract webhook_id and webhook_token from the URL
+    # https://discord.com/api/webhooks/{webhook_id}/{webhook_token}
+    parts = url.rstrip("/").split("/")
+    if len(parts) < 2:
+        logger.error("invalid webhook URL: %s", url)
+        return False
+    webhook_id = parts[-2]
+    webhook_token = parts[-1]
+    api_url = f"https://discord.com/api/webhooks/{webhook_id}/{webhook_token}/messages/{message_id}"
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(api_url, data=data, method="PATCH", headers={
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        logger.error("webhook PATCH http-%s: %s", e.code, e.read()[:300])
+        return False
+    except Exception as e:
+        logger.error("webhook PATCH: %s", e)
+        return False
+
+
+# ── poller ──────────────────────────────────────────────────────────────────
+
+def _gather_fresh() -> list[usage.AccountUsage]:
+    """Force-sync all accounts and return the results."""
+    conn = store.connect()
+    return usage.collect_all(conn, force=True)
+
+
+def _sync_and_post(url: str, message_id: str | None) -> str | None:
+    """Sync all accounts, post or edit the dashboard message, return its ID."""
+    results = _gather_fresh()
+    payload = _build_payload(results)
+
+    if message_id:
+        if _patch_message(url, message_id, payload):
+            return message_id
+        # Edit failed (message deleted?) — fall through to post a new one
+        logger.warning("webhook edit failed, posting new message")
+
+    return _post_message(url, payload)
+
+
+def run_webhook(once: bool = False) -> int:
+    """Run the webhook poller loop. Blocks until interrupted."""
+    cfg = _load_config()
+    if not cfg:
         return 1
+    url = cfg["url"]
+    interval = cfg.get("interval_sec", DEFAULT_INTERVAL_SEC)
 
-    token = cfg.get("token")
-    owner_id = int(cfg.get("owner_id", 0))
-    guild_id = int(cfg.get("guild_id", 0))
-    if not token or not owner_id or not guild_id:
-        print(f"{cfg_path} must set token, owner_id, guild_id.")
-        return 1
+    # Persist the last message ID so we edit across restarts
+    state_path = paths.data_dir() / "webhook_message_id"
 
-    intents = discord.Intents.default()
-    # Slash commands and button interactions need no privileged intents.
-    client = discord.Client(intents=intents)
-    tree = app_commands.CommandTree(client)
+    message_id: str | None = None
+    if state_path.exists():
+        message_id = state_path.read_text().strip() or None
 
-    # In-flight sync guard: message_id -> asyncio.Event set when that message's
-    # sync completes. Prevents stampede if the refresh button is mashed.
-    _inflight: dict[int, asyncio.Event] = {}
+    # Graceful shutdown on SIGINT/SIGTERM (systemd sends SIGTERM)
+    _stop = False
 
-    def _gather_cached() -> list[usage.AccountUsage]:
-        conn = store.connect()
-        return usage.read_cached_all(conn)
+    def _handle_signal(signum, frame):
+        nonlocal _stop
+        _stop = True
 
-    def _gather_fresh() -> list[usage.AccountUsage]:
-        conn = store.connect()
-        return usage.collect_all(conn, force=True)
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
 
-    def _make_embed(results: list[usage.AccountUsage]) -> discord.Embed:
-        text, color = _build_embed(results)
-        newest = _newest_fetched_at(results)
-        age = _age_str(newest) or "never"
-        embed = discord.Embed(
-            description=f"```\n{text}\n```",
-            color=color,
-        )
-        embed.set_footer(text=f"updated {age} · click ⟳ to refresh live")
-        return embed
+    logger.info("tracker webhook started (interval=%ds, url=…%s)",
+                interval, url[-12:])
 
-    def _refresh_button(disabled: bool = False) -> discord.ui.Button:
-        return discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="⟳ Refresh",
-            custom_id=REFRESH_BUTTON_ID,
-            disabled=disabled,
-        )
+    while not _stop:
+        new_id = _sync_and_post(url, message_id)
+        if new_id and new_id != message_id:
+            message_id = new_id
+            state_path.write_text(message_id)
+            logger.info("webhook message posted (id=%s)", message_id)
+        elif new_id:
+            logger.info("webhook message updated (id=%s)", message_id)
+        else:
+            logger.warning("webhook post/edit failed; will retry next cycle")
 
-    def _make_view(disabled: bool = False) -> discord.ui.View:
-        view = discord.ui.View(timeout=None)
-        view.add_item(_refresh_button(disabled=disabled))
-        return view
+        if once:
+            break
+        # Sleep in 1s increments so signals are responsive
+        for _ in range(interval):
+            if _stop:
+                break
+            time.sleep(1)
 
-    @tree.command(
-        name="usage",
-        description="Show live Claude + Grok usage for all tracked accounts",
-        guild=discord.Object(id=guild_id),
-    )
-    async def usage_cmd(interaction: discord.Interaction) -> None:
-        if interaction.user.id != owner_id:
-            await interaction.response.send_message(
-                "not authorized", ephemeral=True)
-            return
-        results = _gather_cached()
-        await interaction.response.send_message(
-            embed=_make_embed(results), view=_make_view()
-        )
-
-    @client.event
-    async def on_interaction(interaction: discord.Interaction) -> None:
-        if interaction.user.id != owner_id:
-            if interaction.type == discord.InteractionType.component:
-                await interaction.response.send_message(
-                    "not authorized", ephemeral=True)
-            return
-        if interaction.type != discord.InteractionType.component:
-            return
-        if interaction.data.get("custom_id") != REFRESH_BUTTON_ID:
-            return
-
-        msg_id = interaction.message.id
-        if msg_id in _inflight:
-            # A sync is already running for this message; ignore the repeat.
-            await interaction.response.defer()
-            return
-
-        evt = asyncio.Event()
-        _inflight[msg_id] = evt
-
-        # Acknowledge immediately; the sync takes ~6s.
-        await interaction.response.edit_message(
-            view=_make_view(disabled=True)
-        )
-
-        try:
-            results = await asyncio.to_thread(_gather_fresh)
-            await interaction.edit_original_response(
-                embed=_make_embed(results), view=_make_view()
-            )
-        except Exception as e:
-            logger.exception("refresh sync failed")
-            try:
-                await interaction.edit_original_response(
-                    content=f"refresh failed: {e}", view=_make_view()
-                )
-            except Exception:
-                pass
-        finally:
-            _inflight.pop(msg_id, None)
-            evt.set()
-
-    @client.event
-    async def on_ready() -> None:
-        guild = discord.Object(id=guild_id)
-        try:
-            synced = await tree.sync(guild=guild)
-            logger.info("synced %d command(s) to guild %s", len(synced), guild_id)
-        except Exception:
-            logger.exception("command sync failed")
-        logger.info("tracker bot ready as %s (guild=%d)", client.user, guild_id)
-
-    client.run(token, log_level=logging.INFO)
+    logger.info("tracker webhook stopped")
     return 0
