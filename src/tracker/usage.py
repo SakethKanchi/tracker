@@ -148,10 +148,9 @@ def _collect_claude(account: Any, conn: Any, force: bool = False) -> AccountUsag
 
 
 def _collect_grok(account: Any, conn: Any, force: bool = False) -> AccountUsage:
-    """Parse local session transcripts (no network) and derive a usage summary."""
+    """Parse local session transcripts + check live quota via api.x.ai."""
     acct_id = account["id"]
 
-    # Grok has no live API — always parse transcripts on sync
     # For `tracker list` without --refresh, serve cached derived sample if fresh
     if not force:
         latest = store.latest_usage_sample(conn, acct_id)
@@ -170,6 +169,23 @@ def _collect_grok(account: Any, conn: Any, force: bool = False) -> AccountUsage:
 
     # Derive summary from all token_usage
     windows = grok.derive_usage_summary(conn, acct_id)
+
+    # Check live quota status via api.x.ai/v1/models
+    cred_blob = credentials.read_credential(acct_id)
+    if cred_blob:
+        access_token = cred_blob.get("key") or cred_blob.get("access_token")
+        if access_token:
+            quota = grok.check_live_quota(access_token)
+            windows["quota_status"] = quota["status"]
+            if quota["status"] == "blocked":
+                windows["quota_reason"] = quota.get("reason", "")
+                windows["quota_message"] = quota.get("message", "")
+                store.insert_rate_limit_event(
+                    conn, account_id=acct_id,
+                    kind=quota.get("reason", "blocked"),
+                    message=quota.get("message"),
+                )
+
     store.insert_usage_sample(conn, account_id=acct_id, source="derived", windows=windows)
 
     return AccountUsage(

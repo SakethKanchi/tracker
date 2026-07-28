@@ -233,3 +233,69 @@ def derive_usage_summary(conn, account_id: str) -> dict[str, Any]:
         }
 
     return windows
+
+
+def check_live_quota(access_token: str, timeout: float = 5.0) -> dict[str, Any]:
+    """Check Grok account quota status via api.x.ai/v1/models.
+
+    Returns:
+      {"status": "active"}  — account is healthy, has remaining quota
+      {"status": "blocked", "reason": "spending-limit", "message": "..."}  — hit limit
+      {"status": "error", "reason": ...}  — couldn't determine
+
+    This is the closest thing Grok has to a live usage endpoint: when the
+    account hits its spending limit / weekly limit / runs out of credits,
+    api.x.ai returns 403 with a structured error code. When healthy, it
+    returns 200 with the model catalog.
+    """
+    import urllib.request
+    import urllib.error
+
+    url = "https://api.x.ai/v1/models"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return {"status": "active", "http_code": resp.status}
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            try:
+                body = json.loads(e.read().decode())
+                code = body.get("code", "")
+                msg = body.get("error", "")
+                # Parse the structured error code:
+                # "personal-team-blocked:spending-limit" → blocked, reason=spending-limit
+                if "spending-limit" in code:
+                    return {
+                        "status": "blocked",
+                        "reason": "spending-limit",
+                        "message": "out of credits — add credits at grok.com/?_s=usage",
+                    }
+                if "weekly-limit" in code or "weekly" in code.lower():
+                    return {
+                        "status": "blocked",
+                        "reason": "weekly-limit",
+                        "message": "weekly limit reached — resets next cycle",
+                    }
+                if "free-usage" in code or "free" in code.lower():
+                    return {
+                        "status": "blocked",
+                        "reason": "free-usage-limit",
+                        "message": "free usage limit hit — upgrade at grok.com/supergrok",
+                    }
+                # Generic blocked
+                return {
+                    "status": "blocked",
+                    "reason": code or "unknown",
+                    "message": msg or "account blocked",
+                }
+            except (json.JSONDecodeError, Exception):
+                return {"status": "error", "reason": f"http-{e.code}"}
+        if e.code == 401:
+            return {"status": "error", "reason": "token-expired",
+                    "message": "access token expired — run grok login --oauth"}
+        return {"status": "error", "reason": f"http-{e.code}"}
+    except Exception as e:
+        return {"status": "error", "reason": "network"}

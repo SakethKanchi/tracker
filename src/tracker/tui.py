@@ -139,6 +139,18 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
         ("$$", Text(f" ${total_cost:.2f}  ({sessions} sessions)", style="magenta")),
     ]
 
+    # Live quota status from api.x.ai/v1/models
+    quota = w.get("quota_status")
+    if quota == "blocked":
+        reason = w.get("quota_reason", "")
+        msg = w.get("quota_message", "")
+        lines.append(("qta", Text.assemble(
+            ("BLOCKED", "bold red"),
+            (f"  {msg}" if msg else f"  {reason}", "red"),
+        )))
+    elif quota == "active":
+        lines.append(("qta", Text("active", style="green")))
+
     rl = w.get("last_rate_limit")
     if rl:
         lines.append(("rl", Text(f" {rl['kind']}", style="yellow")))
