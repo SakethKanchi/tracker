@@ -118,43 +118,45 @@ def _format_windows_claude(au: AccountUsage) -> list[Text]:
 
 
 def _format_windows_grok(au: AccountUsage) -> list[Text]:
-    """Build the indented lines for a Grok account's derived usage."""
+    """Build the indented lines for a Grok account's usage.
+
+    Grok has no per-account live usage % (no Claude-style 5h/7d windows).
+    The primary signal is the live quota check via api.x.ai/v1/models:
+    active (200) or blocked (403). Transcript-derived token stats are
+    session-global and not shown per-account to avoid misrepresentation.
+    """
     if au.error:
         return [Text(f"  {au.error}", style="red")]
     if not au.windows:
         return [Text("  no data", style="dim")]
 
     w = au.windows
-    total_in = w.get("total_input", 0)
-    total_out = w.get("total_output", 0)
-    total_cost = w.get("total_cost", 0)
-    sessions = w.get("session_count", 0)
+    lines: list[tuple[str, Text]] = []
 
-    lines: list[tuple[str, Text]] = [
-        ("tok", Text.assemble(
-            (f"{_fmt_tok(total_in)} in", "cyan"),
-            (" / ", "dim"),
-            (f"{_fmt_tok(total_out)} out", "green"),
-        )),
-        ("$$", Text(f" ${total_cost:.2f}  ({sessions} sessions)", style="magenta")),
-    ]
-
-    # Live quota status from api.x.ai/v1/models
+    # Live quota status — this is the real per-account signal
     quota = w.get("quota_status")
+    tier = au.tier
+    tier_str = f"tier {tier}  " if tier else ""
+
     if quota == "blocked":
-        reason = w.get("quota_reason", "")
-        msg = w.get("quota_message", "")
-        lines.append(("qta", Text.assemble(
-            ("BLOCKED", "bold red"),
-            (f"  {msg}" if msg else f"  {reason}", "red"),
+        msg = w.get("quota_message", w.get("quota_reason", ""))
+        lines.append(("", Text.assemble(
+            (tier_str, "dim"),
+            ("no quota", "bold red"),
+            (f"  {msg}" if msg else "", "red"),
         )))
     elif quota == "active":
-        lines.append(("qta", Text("active", style="green")))
+        lines.append(("", Text.assemble(
+            (tier_str, "dim"),
+            ("has quota", "green"),
+        )))
+    else:
+        lines.append(("", Text.assemble(
+            (tier_str, "dim"),
+            ("status unknown", "yellow"),
+        )))
 
-    rl = w.get("last_rate_limit")
-    if rl:
-        lines.append(("rl", Text(f" {rl['kind']}", style="yellow")))
-
+    # Last activity (from transcript parsing)
     last = w.get("last_activity")
     if last:
         lines.append(("last", Text(f" {last[:10]}", style="dim")))
@@ -175,16 +177,24 @@ def _format_tree_lines(lines: list[tuple[str, Text]]) -> list[Text]:
     """Format (label, content) pairs as ├/└ tree lines with padded labels."""
     if not lines:
         return []
-    pad = max(len(label) for label, _ in lines)
+    # Only pad non-empty labels; empty-label lines get no trailing space
+    nonempty = [len(l) for l, _ in lines if l]
+    pad = max(nonempty) if nonempty else 0
     result: list[Text] = []
     for i, (label, content) in enumerate(lines):
         is_last = i == len(lines) - 1
         connector = "└" if is_last else "├"
-        result.append(Text.assemble(
-            (f"  {connector} ", "dim"),
-            (f"{label:<{pad}} ", "dim"),
-            content,
-        ))
+        if label:
+            result.append(Text.assemble(
+                (f"  {connector} ", "dim"),
+                (f"{label:<{pad}} ", "dim"),
+                content,
+            ))
+        else:
+            result.append(Text.assemble(
+                (f"  {connector} ", "dim"),
+                content,
+            ))
     return result
 
 
@@ -223,30 +233,37 @@ def render_accounts(results: list[AccountUsage]) -> None:
         accounts = by_provider.get(provider, [])
         if not accounts:
             continue
+
         # Provider header
         lines.append(Text.assemble(
             (provider.capitalize(), "bold"),
             (f"  ({len(accounts)})", "dim"),
         ))
+
         for ai, au in enumerate(accounts):
-            is_last_acct = (ai == len(accounts) - 1)
-            # Account header line
-            connector = "└" if is_last_acct else "├"
-            lines.append(Text.assemble(
-                (f"  {connector} ", "dim"),
-                (au.label, "bold"),
-                (f"  {au.email or ''}", "dim"),
-                ("  [", "dim"),
-                _source_tag(au),
-                ("]", "dim"),
-            ))
-            # Window lines (indented under the account)
+            # Account header — plain, no tree connector (cswap style)
+            header = Text.assemble(
+                (f"  {au.label}", "bold"),
+            )
+            if au.email and au.email != au.label:
+                header.append(Text(f"  {au.email}", style="dim"))
+            header.append(Text("  [", style="dim"))
+            header.append(_source_tag(au))
+            header.append(Text("]", style="dim"))
+            lines.append(header)
+
+            # Window lines — indented with ├/└
             if au.provider == "claude":
                 win_lines = _format_windows_claude(au)
             else:
                 win_lines = _format_windows_grok(au)
             for wl in win_lines:
                 lines.append(wl)
+
+            # Blank line between accounts (not after the last one)
+            if ai < len(accounts) - 1:
+                lines.append(Text(""))
+
         if pi < len(provider_order) - 1:
             lines.append(Text(""))
 
@@ -273,7 +290,9 @@ def render_status(results: list[AccountUsage]) -> None:
         parts.append(f"max 7d: {max_7d:.0f}%")
     if relogin_count:
         parts.append(f"{relogin_count} need re-login")
-
+    grok_blocked = sum(1 for r in grok_accts if r.windows and r.windows.get("quota_status") == "blocked")
+    if grok_blocked:
+        parts.append(f"{grok_blocked} Grok blocked")
     console.print("  · ".join(parts))
 
 

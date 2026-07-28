@@ -87,6 +87,12 @@ def cmd_add(args: argparse.Namespace) -> int:
         acct_uuid = identity.get("uuid") if identity else str(uuid.uuid4())
         org_id = identity.get("organizationUuid") if identity else None
 
+        # Dedup: don't add the same account twice
+        existing = store.find_by_provider_account_id(conn, "claude", acct_uuid)
+        if existing:
+            print(f"  already added as: {existing['label']} ({existing['email']})")
+            return 1
+
         default_label = email or acct_uuid[:8] or "claude-account"
         label = _prompt_label(default_label)
 
@@ -116,6 +122,12 @@ def cmd_add(args: argparse.Namespace) -> int:
         user_id = identity.get("user_id")
         team_id = identity.get("team_id")
         tier = identity.get("tier")
+
+        # Dedup: don't add the same account twice
+        existing = store.find_by_provider_account_id(conn, "grok", user_id)
+        if existing:
+            print(f"  already added as: {existing['label']} ({existing['email']})")
+            return 1
 
         default_label = email or user_id[:8] or "grok-account"
         label = _prompt_label(default_label)

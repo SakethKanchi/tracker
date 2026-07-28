@@ -110,6 +110,15 @@ def get_account(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row | None
 def remove_account(conn: sqlite3.Connection, account_id: str) -> None:
     conn.execute("DELETE FROM accounts WHERE id=?", (account_id,))
 
+def find_by_provider_account_id(
+    conn: sqlite3.Connection, provider: str, provider_account_id: str
+) -> sqlite3.Row | None:
+    """Find an existing account by provider + provider_account_id (for dedup)."""
+    return conn.execute(
+        "SELECT * FROM accounts WHERE provider=? AND provider_account_id=? AND is_active=1",
+        (provider, provider_account_id),
+    ).fetchone()
+
 
 # ── usage_samples ──
 
