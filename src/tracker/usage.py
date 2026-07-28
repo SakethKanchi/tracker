@@ -178,11 +178,17 @@ def _collect_grok(account: Any, conn: Any, force: bool = False) -> AccountUsage:
         access_token = cred_blob.get("key") or cred_blob.get("access_token")
         if access_token:
             billing = grok.fetch_credit_usage(access_token)
-            if billing and billing["credit_usage_pct"] is not None:
-                windows["credit_usage_pct"] = billing["credit_usage_pct"]
-                windows["billing_period_end"] = billing["period_end"]
-                if billing["product_usage"]:
-                    windows["product_usage"] = billing["product_usage"]
+            if billing:
+                if billing.get("credit_usage_pct") is not None:
+                    windows["credit_usage_pct"] = billing["credit_usage_pct"]
+                    windows["billing_period_end"] = billing["period_end"]
+                    if billing.get("product_usage"):
+                        windows["product_usage"] = billing["product_usage"]
+                if billing.get("monthly_pct") is not None:
+                    windows["monthly_pct"] = billing["monthly_pct"]
+                    windows["monthly_used"] = billing["monthly_used"]
+                    windows["monthly_limit"] = billing["monthly_limit"]
+                    windows["monthly_period_end"] = billing["monthly_period_end"]
 
             # If usage is pinned at 100 OR billing failed, ask v1/models for
             # the structured blocked reason (gives the friendly "out of credits"

@@ -160,6 +160,14 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
                 pct = p.get("usage_pct")
                 if pct is not None:
                     lines.append((label, _bar(pct)))
+        # Monthly billing window — separate cap, resets monthly
+        monthly_pct = w.get("monthly_pct")
+        if monthly_pct is not None:
+            mbar = _bar(monthly_pct)
+            mreset = _reset_str(w.get("monthly_period_end"))
+            if mreset:
+                mbar.append(f"  {mreset}", style="dim")
+            lines.append(("mo", mbar))
 
     # Actionable blocked hint — only when v1/models confirmed the block.
     quota = w.get("quota_status")

@@ -301,51 +301,65 @@ def check_live_quota(access_token: str, timeout: float = 5.0) -> dict[str, Any]:
         return {"status": "error", "reason": "network"}
 
 def fetch_credit_usage(access_token: str, timeout: float = 5.0) -> dict[str, Any] | None:
-    """Fetch live credit usage from the cli-chat-proxy billing endpoint.
+    """Fetch live credit usage from the cli-chat-proxy billing endpoints.
 
-    This is the same percentage Grok shows in its own UI: the weekly
-    SuperGrok credit window. The endpoint is
-    ``https://cli-chat-proxy.grok.com/v1/billing?format=credits`` and returns:
+    Two windows, both from the same proxy the grok CLI uses:
 
-      {"config": {
-        "currentPeriod": {"start", "end", "type": "...WEEKLY"},
-        "creditUsagePercent": float,     # 0-100, percent USED
-        "productUsage": [{"product": "GrokBuild", "usagePercent": float}],
-        "isUnifiedBillingUser": bool,
-        "prepaidBalance": {"val": int},
-      }}
+    1. Weekly credits  — ``/v1/billing?format=credits`` returns
+       ``creditUsagePercent`` (0-100, % USED). This is the SuperGrok weekly
+       credit window; hitting 100% blocks usage until the period resets.
+
+    2. Monthly billing — ``/v1/billing`` returns ``used`` / ``monthlyLimit``
+       (integer token-cost units). This is the monthly dollar-equivalent
+       spend cap; it resets on the 1st of each month.
 
     Returns None on any failure so the caller falls back to transcript data.
     """
     import urllib.request
     import urllib.error
 
-    url = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
-    req = urllib.request.Request(url, headers={
+    headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
         "User-Agent": "grok-cli/0.2.112",
-    })
+    }
+    base = "https://cli-chat-proxy.grok.com/v1/billing"
+
+    result: dict[str, Any] = {}
+
+    # 1. Weekly credits
     try:
+        req = urllib.request.Request(f"{base}?format=credits", headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        logger.debug("grok billing http-%s: %s", e.code, e.read()[:200])
-        return None
+        cfg = data.get("config") or {}
+        period = cfg.get("currentPeriod") or {}
+        products = [
+            {"product": p.get("product"), "usage_pct": p.get("usagePercent")}
+            for p in (cfg.get("productUsage") or [])
+        ]
+        result["credit_usage_pct"] = cfg.get("creditUsagePercent")
+        result["period_start"] = period.get("start")
+        result["period_end"] = period.get("end")
+        result["product_usage"] = products
     except Exception as e:
-        logger.debug("grok billing network: %s", e)
-        return None
+        logger.debug("grok weekly billing: %s", e)
 
-    cfg = data.get("config") or {}
-    period = cfg.get("currentPeriod") or {}
-    products = [
-        {"product": p.get("product"), "usage_pct": p.get("usagePercent")}
-        for p in (cfg.get("productUsage") or [])
-    ]
-    return {
-        "credit_usage_pct": cfg.get("creditUsagePercent"),
-        "period_start": period.get("start"),
-        "period_end": period.get("end"),
-        "product_usage": products,
-    }
+    # 2. Monthly billing
+    try:
+        req = urllib.request.Request(base, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+        cfg = data.get("config") or {}
+        used = (cfg.get("used") or {}).get("val")
+        limit = (cfg.get("monthlyLimit") or {}).get("val")
+        if isinstance(used, (int, float)) and isinstance(limit, (int, float)) and limit > 0:
+            result["monthly_used"] = used
+            result["monthly_limit"] = limit
+            result["monthly_pct"] = round(used / limit * 100, 1)
+            result["monthly_period_end"] = cfg.get("billingPeriodEnd")
+    except Exception as e:
+        logger.debug("grok monthly billing: %s", e)
+
+    return result if result else None

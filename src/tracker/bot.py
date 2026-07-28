@@ -130,6 +130,14 @@ def _render_account_block(au: usage.AccountUsage) -> tuple[str, str]:
                         pct = p.get("usage_pct")
                         if pct is not None:
                             lines.append(f"  {label:<5} {_plain_bar(pct)}")
+            monthly_pct = w.get("monthly_pct")
+            if monthly_pct is not None:
+                mbar = _plain_bar(monthly_pct)
+                mreset = _reset_str(w.get("monthly_period_end"))
+                line = f"  mo    {mbar}"
+                if mreset:
+                    line += f"  {mreset}"
+                lines.append(line)
             quota = w.get("quota_status")
             if quota == "blocked":
                 msg = w.get("quota_message", w.get("quota_reason", ""))
@@ -175,6 +183,12 @@ def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
             sv = _severity(pct, blocked)
             if _sev_rank(sv) > _sev_rank(worst):
                 worst = sv
+            # Monthly billing also affects severity
+            mo_pct = w.get("monthly_pct")
+            if mo_pct is not None:
+                sv = _severity(mo_pct, blocked=False)
+                if _sev_rank(sv) > _sev_rank(worst):
+                    worst = sv
 
     by_provider: dict[str, list[usage.AccountUsage]] = {}
     for au in results:
