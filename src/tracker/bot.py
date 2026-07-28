@@ -249,6 +249,7 @@ def _post_message(url: str, payload: dict, timeout: float = 10.0) -> str | None:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(api_url, data=data, method="POST", headers={
         "Content-Type": "application/json",
+        "User-Agent": "tracker/0.1",
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -280,6 +281,7 @@ def _patch_message(url: str, message_id: str, payload: dict,
     data = json.dumps(payload).encode()
     req = urllib.request.Request(api_url, data=data, method="PATCH", headers={
         "Content-Type": "application/json",
+        "User-Agent": "tracker/0.1",
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:

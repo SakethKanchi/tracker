@@ -271,25 +271,25 @@ def check_live_quota(access_token: str, timeout: float = 5.0) -> dict[str, Any]:
                     return {
                         "status": "blocked",
                         "reason": "spending-limit",
-                        "message": "out of credits — add credits at grok.com/?_s=usage",
+                        "message": "out of credits",
                     }
                 if "weekly-limit" in code or "weekly" in code.lower():
                     return {
                         "status": "blocked",
                         "reason": "weekly-limit",
-                        "message": "weekly limit reached — resets next cycle",
+                        "message": "weekly limit reached",
                     }
                 if "free-usage" in code or "free" in code.lower():
                     return {
                         "status": "blocked",
                         "reason": "free-usage-limit",
-                        "message": "free usage limit hit — upgrade at grok.com/supergrok",
+                        "message": "free usage limit hit",
                     }
                 # Generic blocked
                 return {
                     "status": "blocked",
                     "reason": code or "unknown",
-                    "message": msg or "account blocked",
+                    "message": msg or "blocked",
                 }
             except (json.JSONDecodeError, Exception):
                 return {"status": "error", "reason": f"http-{e.code}"}
