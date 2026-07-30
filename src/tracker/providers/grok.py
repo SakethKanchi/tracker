@@ -1,10 +1,13 @@
-"""Grok usage: identity from auth.json + ccusage-style transcript parsing.
+"""Grok usage: OIDC refresh + identity + ccusage-style transcript parsing.
 
-Grok has no live quota API. Usage is derived from local session transcripts:
-  ~/.grok/sessions/<url-encoded-cwd>/<session-uuid>/updates.jsonl
-Each ``turn_completed`` event in updates.jsonl carries a ``usage`` object:
-  {inputTokens, outputTokens, totalTokens, cachedReadTokens, reasoningTokens,
-   modelCalls, costUsdTicks, modelUsage: {<model>: {...}}}
+Live signals:
+  - Weekly/monthly credits via cli-chat-proxy.grok.com billing endpoints
+  - Blocked reason via api.x.ai/v1/models (403 with structured code)
+
+Auth:
+  - Tokens from ``grok login --oauth`` live in ~/.grok/auth.json
+  - Refresh: POST {oidc_issuer}/oauth2/token  (grant_type=refresh_token)
+  - Access token field is ``key``; expiry is ISO ``expires_at``
 
 Session attribution (phase 1): all sessions under ~/.grok/sessions/ are
 attributed to the Grok account being synced. Single-account use is correct;
@@ -15,8 +18,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from datetime import datetime, timezone
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -27,21 +33,167 @@ logger = logging.getLogger("tracker")
 # costUsdTicks → USD. xAI uses 1 tick = $1e-9 (nano-dollar), so divide by 1e9.
 TICKS_PER_USD = 1_000_000_000
 
+DEFAULT_OIDC_ISSUER = "https://auth.x.ai"
+DEFAULT_OIDC_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+EXPIRY_BUFFER_S = 5 * 60  # refresh if < 5 min left
+USER_AGENT = "grok-cli/0.2.112"
 
-def _decode_jwt_tier(access_token: str) -> str | None:
-    """Extract the ``tier`` claim from a Grok OIDC access token (JWT)."""
+
+@dataclass
+class RefreshResult:
+    credentials: dict | None  # updated auth blob, or None on failure
+    error: str | None         # "invalid_grant" | "no_refresh_token" | "transient" | None
+
+
+def access_token_of(blob: dict) -> str | None:
+    """Return the bearer token from a grok auth blob."""
+    tok = blob.get("key") or blob.get("access_token")
+    return tok if isinstance(tok, str) and tok else None
+
+
+def _decode_jwt_payload(access_token: str) -> dict[str, Any] | None:
     try:
         import base64
         parts = access_token.split(".")
         if len(parts) < 2:
             return None
-        # JWT middle segment: base64url, may need padding
         payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        tier = payload.get("tier")
-        return str(tier) if tier is not None else None
+        return payload if isinstance(payload, dict) else None
     except Exception:
         return None
+
+
+def _decode_jwt_tier(access_token: str) -> str | None:
+    """Extract the ``tier`` claim from a Grok OIDC access token (JWT)."""
+    payload = _decode_jwt_payload(access_token)
+    if not payload:
+        return None
+    tier = payload.get("tier")
+    return str(tier) if tier is not None else None
+
+
+def _parse_expires_at(value: Any) -> float | None:
+    """Parse auth.json ``expires_at`` (ISO-8601, often with >6 fractional digits)."""
+    if isinstance(value, (int, float)):
+        # Heuristic: ms vs seconds
+        ts = float(value)
+        return ts / 1000.0 if ts > 1e12 else ts
+    if not isinstance(value, str) or not value.strip():
+        return None
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    # Truncate fractional seconds to 6 digits (fromisoformat limit)
+    if "." in s:
+        head, rest = s.split(".", 1)
+        digits = []
+        tz_idx = 0
+        for i, c in enumerate(rest):
+            if c.isdigit():
+                digits.append(c)
+                tz_idx = i + 1
+            else:
+                tz_idx = i
+                break
+        frac = "".join(digits[:6]).ljust(6, "0")
+        s = f"{head}.{frac}{rest[tz_idx:]}"
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except ValueError:
+        return None
+
+
+def expiry_ts(blob: dict) -> float:
+    """Best-effort absolute expiry time (unix seconds). 0 if unknown."""
+    ts = _parse_expires_at(blob.get("expires_at") or blob.get("expiresAt"))
+    if ts is not None:
+        return ts
+    tok = access_token_of(blob)
+    if tok:
+        payload = _decode_jwt_payload(tok)
+        if payload and isinstance(payload.get("exp"), (int, float)):
+            return float(payload["exp"])
+    return 0.0
+
+
+def is_token_expired(blob: dict) -> bool:
+    """True if the access token is missing or within the refresh buffer of expiry."""
+    tok = access_token_of(blob)
+    if not tok:
+        return True
+    exp = expiry_ts(blob)
+    if exp <= 0:
+        return True
+    return time_now() + EXPIRY_BUFFER_S >= exp
+
+
+def time_now() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+
+def refresh_token(blob: dict, timeout: float = 15.0) -> RefreshResult:
+    """Refresh a Grok OIDC access token via auth.x.ai.
+
+    Updates ``key``, ``expires_at``, and ``refresh_token`` (rotation) in-place
+    on success. Returns a copy-friendly updated blob.
+    """
+    refresh_tok = blob.get("refresh_token") or blob.get("refreshToken")
+    if not refresh_tok:
+        return RefreshResult(None, "no_refresh_token")
+
+    client_id = blob.get("oidc_client_id") or DEFAULT_OIDC_CLIENT_ID
+    issuer = (blob.get("oidc_issuer") or DEFAULT_OIDC_ISSUER).rstrip("/")
+    token_url = f"{issuer}/oauth2/token"
+
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_tok,
+        "client_id": client_id,
+    }).encode()
+
+    req = urllib.request.Request(
+        token_url,
+        data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode(errors="replace") if hasattr(e, "read") else ""
+        lower = body_text.lower()
+        if e.code in (400, 401, 403) and (
+            "invalid_grant" in lower
+            or "invalid_token" in lower
+            or "expired" in lower
+            or "revoked" in lower
+        ):
+            return RefreshResult(None, "invalid_grant")
+        logger.debug("Grok refresh failed: %r, body: %s", e, body_text[:500])
+        return RefreshResult(None, "transient")
+    except Exception as e:
+        logger.debug("Grok refresh failed: %r", e)
+        return RefreshResult(None, "transient")
+
+    access = data.get("access_token")
+    if not isinstance(access, str) or not access:
+        return RefreshResult(None, "transient")
+
+    updated = dict(blob)
+    updated["key"] = access
+    expires_in = data.get("expires_in")
+    if isinstance(expires_in, (int, float)) and expires_in > 0:
+        exp_dt = datetime.now(timezone.utc) + timedelta(seconds=float(expires_in))
+        updated["expires_at"] = exp_dt.isoformat().replace("+00:00", "Z")
+    if isinstance(data.get("refresh_token"), str) and data["refresh_token"]:
+        updated["refresh_token"] = data["refresh_token"]
+    return RefreshResult(updated, None)
 
 
 def extract_identity(blob: dict) -> dict:
@@ -49,7 +201,7 @@ def extract_identity(blob: dict) -> dict:
 
     The ``tier`` claim lives in the JWT payload, not the auth.json top level.
     """
-    access_token = blob.get("key") or blob.get("access_token")
+    access_token = access_token_of(blob)
     return {
         "email": blob.get("email"),
         "user_id": blob.get("user_id"),
@@ -235,70 +387,101 @@ def derive_usage_summary(conn, account_id: str) -> dict[str, Any]:
     return windows
 
 
+def _is_auth_failure(http_code: int, code: str, msg: str) -> bool:
+    """True when the API rejected the bearer token (not a spending block).
+
+    Real spending blocks are 403 with a structured team-blocked code. Auth
+    failures show up as 401, as 403 ``unauthenticated:*``, or as 400
+    ``Incorrect API key`` for non-JWT garbage.
+    """
+    if http_code == 401:
+        return True
+    c = (code or "").lower()
+    m = (msg or "").lower()
+    if "unauthenticated" in c or "bad-credentials" in c:
+        return True
+    if "could not be validated" in m or "invalid or expired credentials" in m:
+        return True
+    if "oauth2 access token" in m and ("validat" in m or "expir" in m):
+        return True
+    if "incorrect api key" in m or "invalid api key" in m:
+        return True
+    if http_code == 400 and ("api key" in m or "credentials" in m):
+        return True
+    return False
+
+
 def check_live_quota(access_token: str, timeout: float = 5.0) -> dict[str, Any]:
     """Check Grok account quota status via api.x.ai/v1/models.
 
     Returns:
       {"status": "active"}  — account is healthy, has remaining quota
       {"status": "blocked", "reason": "spending-limit", "message": "..."}  — hit limit
-      {"status": "error", "reason": ...}  — couldn't determine
+      {"status": "error", "reason": "token-expired"|"network"|...}  — couldn't determine
 
-    This is the closest thing Grok has to a live usage endpoint: when the
-    account hits its spending limit / weekly limit / runs out of credits,
-    api.x.ai returns 403 with a structured error code. When healthy, it
-    returns 200 with the model catalog.
+    When the account hits its spending/weekly limit, api.x.ai returns 403 with a
+    structured code like ``personal-team-blocked:spending-limit``. Auth failures
+    also often arrive as 403 (``unauthenticated:bad-credentials``) and must not
+    be mislabeled as "no quota".
     """
-    import urllib.request
-    import urllib.error
-
     url = "https://api.x.ai/v1/models"
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
+        "User-Agent": USER_AGENT,
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return {"status": "active", "http_code": resp.status}
     except urllib.error.HTTPError as e:
+        body: dict[str, Any] = {}
+        try:
+            raw = e.read().decode(errors="replace")
+            parsed = json.loads(raw) if raw else {}
+            if isinstance(parsed, dict):
+                body = parsed
+        except (json.JSONDecodeError, Exception):
+            body = {}
+        code = str(body.get("code") or "")
+        msg = str(body.get("error") or body.get("message") or "")
+
+        if _is_auth_failure(e.code, code, msg):
+            return {
+                "status": "error",
+                "reason": "token-expired",
+                "message": "access token invalid — run grok login --oauth, then tracker add grok",
+            }
+
         if e.code == 403:
-            try:
-                body = json.loads(e.read().decode())
-                code = body.get("code", "")
-                msg = body.get("error", "")
-                # Parse the structured error code:
-                # "personal-team-blocked:spending-limit" → blocked, reason=spending-limit
-                if "spending-limit" in code:
-                    return {
-                        "status": "blocked",
-                        "reason": "spending-limit",
-                        "message": "out of credits",
-                    }
-                if "weekly-limit" in code or "weekly" in code.lower():
-                    return {
-                        "status": "blocked",
-                        "reason": "weekly-limit",
-                        "message": "weekly limit reached",
-                    }
-                if "free-usage" in code or "free" in code.lower():
-                    return {
-                        "status": "blocked",
-                        "reason": "free-usage-limit",
-                        "message": "free usage limit hit",
-                    }
-                # Generic blocked
+            # Parse the structured error code:
+            # "personal-team-blocked:spending-limit" → blocked, reason=spending-limit
+            if "spending-limit" in code:
                 return {
                     "status": "blocked",
-                    "reason": code or "unknown",
-                    "message": msg or "blocked",
+                    "reason": "spending-limit",
+                    "message": "out of credits",
                 }
-            except (json.JSONDecodeError, Exception):
-                return {"status": "error", "reason": f"http-{e.code}"}
-        if e.code == 401:
-            return {"status": "error", "reason": "token-expired",
-                    "message": "access token expired — run grok login --oauth"}
-        return {"status": "error", "reason": f"http-{e.code}"}
-    except Exception as e:
+            if "weekly-limit" in code or "weekly" in code.lower():
+                return {
+                    "status": "blocked",
+                    "reason": "weekly-limit",
+                    "message": "weekly limit reached",
+                }
+            if "free-usage" in code or "free" in code.lower():
+                return {
+                    "status": "blocked",
+                    "reason": "free-usage-limit",
+                    "message": "free usage limit hit",
+                }
+            return {
+                "status": "blocked",
+                "reason": code or "unknown",
+                "message": msg or "blocked",
+            }
+        return {"status": "error", "reason": f"http-{e.code}", "message": msg or None}
+    except Exception:
         return {"status": "error", "reason": "network"}
+
 
 def fetch_credit_usage(access_token: str, timeout: float = 5.0) -> dict[str, Any] | None:
     """Fetch live credit usage from the cli-chat-proxy billing endpoints.
@@ -315,14 +498,11 @@ def fetch_credit_usage(access_token: str, timeout: float = 5.0) -> dict[str, Any
 
     Returns None on any failure so the caller falls back to transcript data.
     """
-    import urllib.request
-    import urllib.error
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "grok-cli/0.2.112",
+        "User-Agent": USER_AGENT,
     }
     base = "https://cli-chat-proxy.grok.com/v1/billing"
 

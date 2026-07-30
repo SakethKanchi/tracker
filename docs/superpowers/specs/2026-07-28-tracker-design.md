@@ -211,10 +211,12 @@ adaptive polling (per-token AIMD backoff) like cswap's `poll_policy`.
   is not a stable public contract. The parser must degrade gracefully
   (skip unparsable entries, log) rather than crash. Validate against the real
   files on this machine during implementation.
-- **Grok refresh-token endpoint** (`auth.x.ai` OIDC): the exact refresh URL and
-  client-id for `grok login --oauth` accounts need confirming against the
-  client's own code/config before implementation (the `auth.json` carries
-  `oidc_issuer` and `oidc_client_id` — use those).
+- **Grok OIDC refresh (implemented):** `POST {oidc_issuer}/oauth2/token` with
+  `grant_type=refresh_token`, `client_id` from auth.json
+  (`b1a00492-073a-47ea-816f-4c329264a828` for the Grok CLI). Form-urlencoded
+  body; tokens rotate (`refresh_token` replaced). Tracker writes the new blob
+  to its credential store and, when `user_id` matches, best-effort updates
+  `~/.grok/auth.json` so the CLI stays in sync.
 - **Usage-endpoint 429 budget:** Claude's usage endpoint throttles
   per-access-token non-first-party User-Agents. The refresh-if-stale model plus
   `fetch_state` backoff keeps probing within the budget; never blank `last_good`

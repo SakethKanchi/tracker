@@ -117,36 +117,60 @@ def cmd_add(args: argparse.Namespace) -> int:
             print("  log in with `grok login --oauth` first, then run: tracker add grok")
             return 1
 
+        # Refresh if the live CLI token is near expiry so we store a good one.
+        # Always write the rotated grant back to auth.json — otherwise the CLI
+        # keeps the previous refresh_token and forces a browser re-login.
+        if grok.is_token_expired(blob):
+            print("  token expired, refreshing...")
+            result = grok.refresh_token(blob)
+            if result.credentials:
+                blob = result.credentials
+                credentials.write_back_grok_auth(blob)
+            elif result.error in ("invalid_grant", "no_refresh_token"):
+                print("  refresh token is dead — re-login with `grok login --oauth`, then run: tracker add grok")
+                return 1
+
         identity = grok.extract_identity(blob)
         email = identity.get("email")
         user_id = identity.get("user_id")
         team_id = identity.get("team_id")
         tier = identity.get("tier")
 
-        # Dedup: don't add the same account twice
+        # Same account already tracked → refresh stored credentials in place.
         existing = store.find_by_provider_account_id(conn, "grok", user_id)
         if existing:
-            print(f"  already added as: {existing['label']} ({existing['email']})")
-            return 1
+            credentials.write_credential(existing["id"], blob)
+            # Clear any prior invalid_grant backoff after a successful re-import.
+            store.upsert_fetch_state(
+                conn, account_id=existing["id"],
+                consecutive_failures=0, backoff_until=None, last_error=None,
+            )
+            if tier and tier != existing["tier"]:
+                conn.execute(
+                    "UPDATE accounts SET tier=?, email=COALESCE(?, email), org_id=COALESCE(?, org_id) WHERE id=?",
+                    (tier, email, team_id, existing["id"]),
+                )
+            label = existing["label"]
+            print(f"  updated grok credentials: {label} ({email})")
+        else:
+            default_label = email or (user_id[:8] if user_id else "grok-account")
+            label = _prompt_label(default_label)
 
-        default_label = email or user_id[:8] or "grok-account"
-        label = _prompt_label(default_label)
+            account_id = str(uuid.uuid4())
+            credentials.write_credential(account_id, blob)
+            store.add_account(
+                conn,
+                id=account_id,
+                provider="grok",
+                label=label,
+                email=email,
+                provider_account_id=user_id,
+                org_id=team_id,
+                tier=tier,
+            )
+            print(f"  added grok account: {label} ({email})")
 
-        account_id = str(uuid.uuid4())
-        credentials.write_credential(account_id, blob)
-        store.add_account(
-            conn,
-            id=account_id,
-            provider="grok",
-            label=label,
-            email=email,
-            provider_account_id=user_id,
-            org_id=team_id,
-            tier=tier,
-        )
-        print(f"  added grok account: {label} ({email})")
-
-    # Immediately collect usage for the new account
+    # Immediately collect usage for the new/updated account
     au = usage.collect_one(conn, label, force=True)
     if au and au.windows:
         print(f"  collected initial usage ({au.source})")

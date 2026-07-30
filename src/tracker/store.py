@@ -204,16 +204,21 @@ def get_fetch_state(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row | 
     ).fetchone()
 
 
+# Sentinel: distinguish "caller omitted this field" from "caller set it to None"
+# (None is meaningful for backoff_until / last_error — it clears them on success).
+_UNSET: object = object()
+
+
 def upsert_fetch_state(
     conn: sqlite3.Connection,
     *,
     account_id: str,
-    last_attempt_at: float | None = None,
-    consecutive_failures: int | None = None,
-    backoff_until: float | None = None,
-    last_error: str | None = None,
+    last_attempt_at: float | None | object = _UNSET,
+    consecutive_failures: int | None | object = _UNSET,
+    backoff_until: float | None | object = _UNSET,
+    last_error: str | None | object = _UNSET,
 ) -> None:
-    """Upsert fetch_state. Only updates columns that are not None.
+    """Upsert fetch_state. Omitted fields are preserved; explicit None clears.
 
     Uses INSERT OR REPLACE because SQLite's ON CONFLICT DO UPDATE clause
     re-evaluates the FOREIGN KEY constraint on this build (3.53.4) even when
@@ -222,7 +227,8 @@ def upsert_fetch_state(
     # Read existing row so unspecified columns are preserved (INSERT OR REPLACE
     # would otherwise blank them to defaults).
     existing = conn.execute(
-        "SELECT consecutive_failures, backoff_until, last_error FROM fetch_state WHERE account_id=?",
+        "SELECT last_attempt_at, consecutive_failures, backoff_until, last_error "
+        "FROM fetch_state WHERE account_id=?",
         (account_id,),
     ).fetchone()
     row = dict(existing) if existing else {}
@@ -233,7 +239,7 @@ def upsert_fetch_state(
         ("backoff_until", backoff_until),
         ("last_error", last_error),
     ]:
-        if val is not None:
+        if val is not _UNSET:
             row[name] = val
 
     conn.execute(

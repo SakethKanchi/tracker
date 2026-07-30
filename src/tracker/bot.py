@@ -145,6 +145,11 @@ def _render_account_block(au: usage.AccountUsage) -> tuple[str, str]:
                 if msg:
                     line += f"  {msg}"
                 lines.append(line)
+            elif quota == "error":
+                reason = w.get("quota_reason", "")
+                msg = w.get("quota_message") or reason or "auth error"
+                label = "auth expired" if reason == "token-expired" else "auth error"
+                lines.append(f"  qta   {label}  {msg}")
             elif quota == "active" and credit_pct is None:
                 lines.append("  qta   has quota")
             last = w.get("last_activity")

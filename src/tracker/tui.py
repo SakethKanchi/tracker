@@ -132,7 +132,7 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
     shows. When billing is unreachable we fall back to the binary
     active/blocked flag from ``api.x.ai/v1/models``.
     """
-    if au.error:
+    if au.error and not au.windows:
         return [Text(f"  {au.error}", style="red")]
     if not au.windows:
         return [Text("  no data", style="dim")]
@@ -160,16 +160,18 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
                 pct = p.get("usage_pct")
                 if pct is not None:
                     lines.append((label, _bar(pct)))
-        # Monthly billing window — separate cap, resets monthly
-        monthly_pct = w.get("monthly_pct")
-        if monthly_pct is not None:
-            mbar = _bar(monthly_pct)
-            mreset = _reset_str(w.get("monthly_period_end"))
-            if mreset:
-                mbar.append(f"  {mreset}", style="dim")
-            lines.append(("mo", mbar))
 
-    # Actionable blocked hint — only when v1/models confirmed the block.
+    # Monthly billing window — independent of weekly credits field
+    # (api sometimes omits creditUsagePercent for unified-billing accounts).
+    monthly_pct = w.get("monthly_pct")
+    if monthly_pct is not None:
+        mbar = _bar(monthly_pct)
+        mreset = _reset_str(w.get("monthly_period_end"))
+        if mreset:
+            mbar.append(f"  {mreset}", style="dim")
+        lines.append(("mo", mbar))
+
+    # Actionable quota / auth hint from v1/models (when billing is missing or 100%).
     quota = w.get("quota_status")
     if quota == "blocked":
         msg = w.get("quota_message", w.get("quota_reason", ""))
@@ -177,6 +179,17 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
         if msg:
             parts.append((f"  {msg}", "red"))
         lines.append(("qta", Text.assemble(*parts)))
+    elif quota == "error":
+        reason = w.get("quota_reason", "")
+        msg = w.get("quota_message") or reason or "auth error"
+        if reason == "token-expired" or au.needs_relogin:
+            label = "auth expired"
+        else:
+            label = "auth error"
+        lines.append(("qta", Text.assemble(
+            (label, "bold red"),
+            (f"  {msg}", "red"),
+        )))
     elif quota == "active" and credit_pct is None:
         lines.append(("qta", Text("has quota", style="green")))
 
@@ -184,6 +197,10 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
     last = w.get("last_activity")
     if last:
         lines.append(("last", Text(f" {last[:10]}", style="dim")))
+
+    # Top-level auth/refresh error (e.g. dead refresh token) alongside any windows.
+    if au.error and quota != "error":
+        lines.append(("err", Text(f" {au.error}", style="red")))
 
     return _format_tree_lines(lines)
 
