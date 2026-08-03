@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import time
+from io import StringIO
 from pathlib import Path
 
 # Allow running without install
@@ -146,12 +147,13 @@ def main() -> int:
     try:
         # list dashboard — export text before SVG (save_svg clears the record)
         def _console() -> Console:
+            # file=StringIO keeps stdout clean while still recording for export
             return Console(
+                file=StringIO(),
                 record=True,
                 width=78,
                 force_terminal=True,
                 color_system="truecolor",
-                quiet=True,  # don't spam stdout while recording
             )
 
         list_console = _console()

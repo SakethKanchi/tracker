@@ -1,1 +1,22 @@
+Claude  (2)
+  work  you@example.com  [api · 12s ago]
+  ├ 5h     ████░░░░░░░░░░░░░░░░  20%  resets in 21m
+  ├ 7d     █████████████░░░░░░░  63%  resets in 3d0h
+  └ Sonnet ██████████░░░░░░░░░░  48%  resets in 2d23h
+
+  personal  me@example.com  [cached · 3m ago]
+  ├ 5h ██████████████████░░  91%  resets in 44m
+  └ 7d ██████████████████░░  88%  resets in 1d23h
+
+Grok  (2)
+  main  you@example.com  t5  [api · 40s ago]
+  ├ wk   █░░░░░░░░░░░░░░░░░░░   5%  resets in 6d20h
+  ├ mo   ░░░░░░░░░░░░░░░░░░░░   2%  resets in 27d23h
+  └ last  2026-08-01
+
+  spare  alt@example.com  t5  [cached · 2m ago]
+  ├ wk   ████████████████████ 100%  resets in 1d16h
+  ├ mo   ░░░░░░░░░░░░░░░░░░░░   0%  resets in 27d23h
+  ├ qta  no quota  out of credits
+  └ last  2026-07-30
 

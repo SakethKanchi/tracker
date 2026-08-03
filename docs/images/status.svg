@@ -19,40 +19,42 @@
         font-weight: 700;
     }
 
-    .terminal-710608305-matrix {
+    .terminal-1470476537-matrix {
         font-family: Fira Code, monospace;
         font-size: 20px;
         line-height: 24.4px;
         font-variant-east-asian: full-width;
     }
 
-    .terminal-710608305-title {
+    .terminal-1470476537-title {
         font-size: 18px;
         font-weight: bold;
         font-family: arial;
     }
 
-    
+    .terminal-1470476537-r1 { fill: #68a0b3;font-weight: bold }
+.terminal-1470476537-r2 { fill: #c5c8c6 }
     </style>
 
     <defs>
-    <clipPath id="terminal-710608305-clip-terminal">
+    <clipPath id="terminal-1470476537-clip-terminal">
       <rect x="0" y="0" width="975.0" height="23.4" />
     </clipPath>
     
     </defs>
 
-    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="992" height="72.4" rx="8"/><text class="terminal-710608305-title" fill="#c5c8c6" text-anchor="middle" x="496" y="27">tracker&#160;status</text>
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="992" height="72.4" rx="8"/><text class="terminal-1470476537-title" fill="#c5c8c6" text-anchor="middle" x="496" y="27">tracker&#160;status</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>
             <circle cx="44" cy="0" r="7" fill="#28c840"/>
             </g>
         
-    <g transform="translate(9, 41)" clip-path="url(#terminal-710608305-clip-terminal)">
+    <g transform="translate(9, 41)" clip-path="url(#terminal-1470476537-clip-terminal)">
     
-    <g class="terminal-710608305-matrix">
-    
+    <g class="terminal-1470476537-matrix">
+    <text class="terminal-1470476537-r1" x="0" y="20" textLength="12.2" clip-path="url(#terminal-1470476537-line-0)">2</text><text class="terminal-1470476537-r2" x="12.2" y="20" textLength="134.2" clip-path="url(#terminal-1470476537-line-0)">&#160;Claude&#160;&#160;·&#160;</text><text class="terminal-1470476537-r1" x="146.4" y="20" textLength="12.2" clip-path="url(#terminal-1470476537-line-0)">2</text><text class="terminal-1470476537-r2" x="158.6" y="20" textLength="207.4" clip-path="url(#terminal-1470476537-line-0)">&#160;Grok&#160;&#160;·&#160;max&#160;7d:&#160;</text><text class="terminal-1470476537-r1" x="366" y="20" textLength="24.4" clip-path="url(#terminal-1470476537-line-0)">88</text><text class="terminal-1470476537-r2" x="390.4" y="20" textLength="61" clip-path="url(#terminal-1470476537-line-0)">%&#160;&#160;·&#160;</text><text class="terminal-1470476537-r1" x="451.4" y="20" textLength="12.2" clip-path="url(#terminal-1470476537-line-0)">1</text><text class="terminal-1470476537-r2" x="463.6" y="20" textLength="158.6" clip-path="url(#terminal-1470476537-line-0)">&#160;Grok&#160;blocked</text><text class="terminal-1470476537-r2" x="976" y="20" textLength="12.2" clip-path="url(#terminal-1470476537-line-0)">
+</text>
     </g>
     </g>
 </svg>
