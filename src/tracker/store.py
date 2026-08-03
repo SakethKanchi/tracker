@@ -161,12 +161,24 @@ def insert_token_usage(
 
 
 def token_usage_since(
-    conn: sqlite3.Connection, account_id: str | None, since_ts: float = 0
+    conn: sqlite3.Connection,
+    account_id: str | None,
+    since_ts: float = 0,
+    provider: str | None = None,
 ) -> list[sqlite3.Row]:
+    """Token usage rows since ``since_ts``, optionally filtered by account or provider."""
     if account_id:
         return conn.execute(
             "SELECT * FROM token_usage WHERE account_id=? AND ts>=? ORDER BY ts DESC",
             (account_id, since_ts),
+        ).fetchall()
+    if provider:
+        return conn.execute(
+            """SELECT t.* FROM token_usage t
+               JOIN accounts a ON a.id = t.account_id
+               WHERE a.provider=? AND t.ts>=?
+               ORDER BY t.ts DESC""",
+            (provider, since_ts),
         ).fetchall()
     return conn.execute(
         "SELECT * FROM token_usage WHERE ts>=? ORDER BY ts DESC", (since_ts,)

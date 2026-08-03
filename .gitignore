@@ -1,6 +1,40 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.egg-info/
+*.egg
+.eggs/
 build/
 dist/
+.venv/
+venv/
 .uv/
+
+# Tooling / IDE
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local secrets / runtime data (never commit)
+# Credentials live under ~/.config/tracker/; do not copy them here.
+*.db
+*.db-shm
+*.db-wal
+webhook.json
+webhook_message_id
+.env
+.env.*
+
+# Generated screenshot scratch (committed assets live in docs/images/)
+/tmp/

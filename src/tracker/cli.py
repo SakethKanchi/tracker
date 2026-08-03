@@ -223,7 +223,9 @@ def cmd_tokens(args: argparse.Namespace) -> int:
                 print(f"error: unparseable --since: {args.since}")
                 return 1
 
-    rows = store.token_usage_since(conn, account_id=None, since_ts=since_ts)
+    rows = store.token_usage_since(
+        conn, account_id=None, since_ts=since_ts, provider=args.provider,
+    )
     tui.render_tokens(rows, since=args.since)
     return 0
 
@@ -282,9 +284,14 @@ def cmd_webhook(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
+
     parser = argparse.ArgumentParser(
         prog="tracker",
         description="Unified usage tracker for Claude + Grok accounts",
+    )
+    parser.add_argument(
+        "-V", "--version", action="version", version=f"tracker {__version__}",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -342,6 +349,7 @@ def main() -> int:
         "tokens": cmd_tokens,
         "status": cmd_status,
         "remove": cmd_remove,
+        "log": cmd_log,
         "webhook": cmd_webhook,
     }
     handler = handlers.get(args.command)
