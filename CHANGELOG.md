@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README links and the demo screenshot now use absolute URLs so they render on
   the PyPI project page.
 
+### Fixed
+
+- Ship a `py.typed` marker. The package declared the `Typing :: Typed`
+  classifier but shipped no marker, so type checkers silently ignored its
+  annotations in downstream projects (PEP 561).
+
 ### Added
 
 - CI workflow (`.github/workflows/ci.yml`): install, byte-compile, CLI smoke
