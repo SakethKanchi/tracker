@@ -156,6 +156,7 @@ tracker status         # one-line aggregate
 |---------|----------------|
 | `tracker` / `tracker list` | Primary dashboard — all accounts, refresh-if-stale |
 | `tracker list --refresh` | Force-refresh every account, then show |
+| `tracker list --watch [N]` | Live dashboard, redraws every N seconds (default 5) |
 | `tracker add claude\|grok\|codex` | Import live OAuth credential from CLI config |
 | `tracker add <api_key>` / `tracker --add <api_key>` | Auto-detect provider from key and add |
 | `tracker sync` / `tracker sync --label NAME` | Force-refresh (all or one label) |

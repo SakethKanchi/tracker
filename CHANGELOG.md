@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tracker list --watch [SECONDS]` — live dashboard that redraws in place
+  (`rich.live`, no new dependency). Collection still honors the refresh-if-stale
+  TTL and 429 backoff, so a short redraw interval does not increase API polling.
+  Falls back to a single render when output is not a terminal.
 - `tracker status` now names the account with the most headroom
   (`best: Grok main  95% free`), computed as `100 - worst window used` across
   every window a provider reports.
