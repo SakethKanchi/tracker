@@ -424,14 +424,17 @@ def _format_windows_for(au: AccountUsage) -> list[Text]:
     return _format_windows_apikey(au)
 
 
-def render_accounts(results: list[AccountUsage]) -> None:
-    """Render the all-accounts usage dashboard as a compact tree."""
+def build_accounts_renderable(results: list[AccountUsage]) -> Text:
+    """Build the dashboard as a single renderable.
+
+    Split out from :func:`render_accounts` so the live ``--watch`` loop can
+    hand the same content to ``rich.live.Live`` instead of re-printing.
+    """
     if not results:
-        console.print(
+        return Text.from_markup(
             "[dim]No accounts added yet. Run:[/dim]  "
             "tracker add claude|grok|codex  [dim]or[/dim]  tracker add <api_key>"
         )
-        return
 
     # Group by provider
     by_provider: dict[str, list[AccountUsage]] = {}
@@ -489,7 +492,12 @@ def render_accounts(results: list[AccountUsage]) -> None:
             if ai < len(accounts) - 1:
                 lines.append(Text(""))
 
-    console.print(Text("\n").join(lines) if lines else "")
+    return Text("\n").join(lines) if lines else Text("")
+
+
+def render_accounts(results: list[AccountUsage]) -> None:
+    """Render the all-accounts usage dashboard as a compact tree."""
+    console.print(build_accounts_renderable(results))
 
 
 def _headroom_pct(au: AccountUsage) -> float | None:

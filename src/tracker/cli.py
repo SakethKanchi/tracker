@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import time
 import uuid
 
 from . import credentials, store, tui, usage
@@ -330,9 +331,50 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     conn = store.connect()
+    if getattr(args, "watch", None):
+        return _watch_loop(conn, interval=args.watch, force_first=args.refresh)
     results = usage.collect_all(conn, force=args.refresh)
     tui.render_accounts(results)
     return 0
+
+
+def _watch_loop(conn, interval: int, force_first: bool = False) -> int:
+    """Re-render the dashboard in place until interrupted.
+
+    Collection still honors the normal refresh-if-stale rules and 429 backoff,
+    so a 2-second redraw does not mean a 2-second poll of the provider APIs:
+    most frames are served from cache. Ctrl-C exits cleanly.
+    """
+    from rich.live import Live
+
+    interval = max(1, int(interval))
+
+    # Live redraw needs a terminal. When piped or redirected, fall back to a
+    # single render so `tracker list --watch > file` is not silently empty.
+    if not tui.console.is_terminal:
+        tui.render_accounts(usage.collect_all(conn, force=force_first))
+        return 0
+
+    first = True
+    try:
+        with Live(
+            tui.build_accounts_renderable(usage.collect_all(conn, force=force_first)),
+            console=tui.console,
+            screen=False,
+            auto_refresh=False,
+            transient=False,
+        ) as live:
+            while True:
+                if not first:
+                    results = usage.collect_all(conn, force=False)
+                    live.update(tui.build_accounts_renderable(results), refresh=True)
+                else:
+                    live.refresh()
+                first = False
+                time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+        return 0
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -462,6 +504,15 @@ def build_parser() -> argparse.ArgumentParser:
     # list (primary)
     p_list = sub.add_parser("list", help="show all accounts' usage (primary command)")
     p_list.add_argument("--refresh", action="store_true", help="force-refresh every account first")
+    p_list.add_argument(
+        "--watch",
+        nargs="?",
+        type=int,
+        const=5,
+        default=None,
+        metavar="SECONDS",
+        help="live-refresh the dashboard every SECONDS (default 5); Ctrl-C to exit",
+    )
 
     # sync
     p_sync = sub.add_parser("sync", help="force-refresh usage")
