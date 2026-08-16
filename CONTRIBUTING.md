@@ -1,12 +1,12 @@
 # Contributing
 
 Thanks for helping improve **tracker**. This project stays small on purpose:
-read-only multi-account usage observability for Claude + Grok.
+read-only multi-account usage observability for Claude, Grok, Codex, Gemini, and OpenAI.
 
 ## Setup
 
 ```bash
-git clone https://github.com/sakethkanchi/tracker.git
+git clone https://github.com/SakethKanchi/tracker.git
 cd tracker
 uv sync          # or: pip install -e .
 PYTHONPATH=src python -m tracker.cli --help

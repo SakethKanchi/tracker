@@ -134,6 +134,64 @@ def demo_accounts() -> list[AccountUsage]:
             error=None,
             needs_relogin=False,
         ),
+        AccountUsage(
+            account_id="demo-codex-1",
+            provider="codex",
+            label="chatgpt",
+            email="you@example.com",
+            tier="plus",
+            windows={
+                "primary": {
+                    "pct": 34.0,
+                    "window_minutes": 300,
+                    "resets_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW + 2 * 3600 + 10 * 60)
+                    ),
+                },
+                "secondary": {
+                    "pct": 71.0,
+                    "window_minutes": 60 * 24 * 7,
+                    "resets_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW + 4 * 86400)
+                    ),
+                },
+            },
+            source="api",
+            fetched_at=NOW - 25,
+            error=None,
+            needs_relogin=False,
+        ),
+        AccountUsage(
+            account_id="demo-gemini-1",
+            provider="gemini",
+            label="aistudio",
+            email=None,
+            tier=None,
+            windows={
+                "quota_status": "active",
+                "model_count": 47,
+                "sample_models": ["gemini-2.5-pro", "gemini-2.5-flash"],
+            },
+            source="api",
+            fetched_at=NOW - 60,
+            error=None,
+            needs_relogin=False,
+        ),
+        AccountUsage(
+            account_id="demo-openai-1",
+            provider="openai",
+            label="platform",
+            email=None,
+            tier=None,
+            windows={
+                "quota_status": "blocked",
+                "quota_message": "insufficient_quota",
+            },
+            source="api",
+            fetched_at=NOW - 75,
+            error=None,
+            needs_relogin=False,
+        ),
     ]
 
 

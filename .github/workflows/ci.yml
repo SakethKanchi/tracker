@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q src
+
+      - name: CLI smoke test
+        run: |
+          tracker --version
+          tracker --help
+          tracker list --help
+          tracker status --help
+
+      - name: Build distributions
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*

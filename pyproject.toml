@@ -47,10 +47,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sakethkanchi/tracker"
-Repository = "https://github.com/sakethkanchi/tracker"
-Issues = "https://github.com/sakethkanchi/tracker/issues"
-Documentation = "https://github.com/sakethkanchi/tracker#readme"
+Homepage = "https://github.com/SakethKanchi/tracker"
+Repository = "https://github.com/SakethKanchi/tracker"
+Issues = "https://github.com/SakethKanchi/tracker/issues"
+Documentation = "https://github.com/SakethKanchi/tracker#readme"
 
 [project.scripts]
 tracker = "tracker.cli:main"

@@ -2,7 +2,7 @@
 
 ## What this tool handles
 
-`tracker` stores **OAuth/OIDC tokens** for your Claude and Grok accounts on
+`tracker` stores **OAuth/OIDC tokens** for your Claude, Grok, and Codex accounts on
 disk so it can query usage APIs. Treat the machine it runs on as trusted.
 
 | Path | Sensitivity |

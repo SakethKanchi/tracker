@@ -9,14 +9,29 @@ Claude  (2)
   └ 7d ██████████████████░░  88%  resets in 1d23h
 
 Grok  (2)
-  main  you@example.com  t5  [api · 40s ago]
+  main  you@example.com  5  [api · 40s ago]
   ├ wk   █░░░░░░░░░░░░░░░░░░░   5%  resets in 6d20h
   ├ mo   ░░░░░░░░░░░░░░░░░░░░   2%  resets in 27d23h
   └ last  2026-08-01
 
-  spare  alt@example.com  t5  [cached · 2m ago]
+  spare  alt@example.com  5  [cached · 2m ago]
   ├ wk   ████████████████████ 100%  resets in 1d16h
   ├ mo   ░░░░░░░░░░░░░░░░░░░░   0%  resets in 27d23h
   ├ qta  no quota  out of credits
   └ last  2026-07-30
+
+Codex  (1)
+  chatgpt  you@example.com  plus  [api · 25s ago]
+  ├ 5h ███████░░░░░░░░░░░░░  34%  resets in 2h9m
+  └ wk ██████████████░░░░░░  71%  resets in 3d23h
+
+Gemini  (1)
+  aistudio  [api · 1m ago]
+  ├ key     valid
+  ├ models  47
+  └ e.g.    gemini-2.5-pro, gemini-2.5-flash
+
+OpenAI  (1)
+  platform  [api · 1m ago]
+  └ key  blocked  insufficient_quota
 

@@ -1,2 +1,3 @@
-2 Claude  · 2 Grok  · max 7d: 88%  · 1 Grok blocked
+2 Claude  · 2 Grok  · 1 Codex  · 1 Gemini  · 1 OpenAI  · max 7d: 88%  · 1 Grok
+blocked
 

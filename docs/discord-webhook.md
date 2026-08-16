@@ -1,6 +1,6 @@
 # Discord webhook dashboard
 
-Push the same Claude + Grok usage tree to a Discord channel. The poller posts
+Push the same multi-provider usage tree to a Discord channel. The poller posts
 one message, then edits it on each cycle — no bot token, no slash commands.
 
 ## 1. Create a webhook

@@ -5,6 +5,7 @@
 See every subscription's quota in one terminal command — no more logging into
 each account, checking usage, and logging out.
 
+[![CI](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -13,8 +14,9 @@ each account, checking usage, and logging out.
 ## Why
 
 If you juggle multiple AI accounts, checking "who still has quota?" is a
-ritual. **tracker** imports credentials from official CLIs (or accepts pasted
-API keys), then:
+ritual: log in, read a usage page, log out, repeat. **tracker** reuses the
+credentials the official CLIs already wrote (or a pasted API key) and answers
+the question in one command.
 
 - `tracker` / `tracker list` — dashboard for **all** accounts at once
 - Refresh-if-stale collection (cached when fresh, network when not)
@@ -38,28 +40,52 @@ Claude  (2)
   └ Sonnet ██████████░░░░░░░░░░  48%  resets in 2d23h
 
   personal  me@example.com  [cached · 3m ago]
-  ├ 5h     ██████████████████░░  91%  resets in 44m
-  └ 7d     ██████████████████░░  88%  resets in 1d23h
+  ├ 5h ██████████████████░░  91%  resets in 44m
+  └ 7d ██████████████████░░  88%  resets in 1d23h
 
 Grok  (2)
-  main  you@example.com  t5  [api · 40s ago]
-  ├ wk     █░░░░░░░░░░░░░░░░░░░   5%  resets in 6d20h
-  ├ mo     ░░░░░░░░░░░░░░░░░░░░   2%  resets in 27d23h
-  └ last    2026-08-01
+  main  you@example.com  5  [api · 40s ago]
+  ├ wk   █░░░░░░░░░░░░░░░░░░░   5%  resets in 6d20h
+  ├ mo   ░░░░░░░░░░░░░░░░░░░░   2%  resets in 27d23h
+  └ last  2026-08-01
 
-  spare  alt@example.com  t5  [cached · 2m ago]
-  ├ wk     ████████████████████ 100%  resets in 1d16h
-  ├ mo     ░░░░░░░░░░░░░░░░░░░░   0%  resets in 27d23h
-  ├ qta    no quota  out of credits
-  └ last    2026-07-30
+  spare  alt@example.com  5  [cached · 2m ago]
+  ├ wk   ████████████████████ 100%  resets in 1d16h
+  ├ mo   ░░░░░░░░░░░░░░░░░░░░   0%  resets in 27d23h
+  ├ qta  no quota  out of credits
+  └ last  2026-07-30
+
+Codex  (1)
+  chatgpt  you@example.com  plus  [api · 25s ago]
+  ├ 5h ███████░░░░░░░░░░░░░  34%  resets in 2h9m
+  └ wk ██████████████░░░░░░  71%  resets in 3d23h
+
+Gemini  (1)
+  aistudio  [api · 1m ago]
+  ├ key     valid
+  ├ models  47
+  └ e.g.    gemini-2.5-pro, gemini-2.5-flash
+
+OpenAI  (1)
+  platform  [api · 1m ago]
+  └ key  blocked  insufficient_quota
 ```
+
+`tracker status` compresses the same data to one line:
+
+```
+2 Claude · 2 Grok · 1 Codex · 1 Gemini · 1 OpenAI · max 7d: 88% · 1 Grok blocked
+```
+
+> Demo data is synthetic (`scripts/generate_screenshots.py`); no real account
+> is ever rendered into the docs.
 
 ## Install
 
 ### From source (recommended while pre-release)
 
 ```bash
-git clone https://github.com/sakethkanchi/tracker.git
+git clone https://github.com/SakethKanchi/tracker.git
 cd tracker
 uv tool install .          # installs the `tracker` CLI
 # or:  pip install .
@@ -193,6 +219,34 @@ Original design notes: [docs/superpowers/specs/2026-07-28-tracker-design.md](doc
 
 **tracker** is provider-agnostic and intentionally **does not** auto-switch
 accounts (that can come later on top of the same store).
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `re-login needed — refresh token dead` | The provider CLI (or another machine) rotated the grant out from under tracker | Log in with the provider CLI again, then `tracker add <provider>` |
+| Codex says `refresh_token_reused` | `~/.codex/auth.json` was copied between machines and both sides refresh | Re-run the Codex ChatGPT login on one machine only, then re-add |
+| A row shows `backing-off` | The provider returned HTTP 429; tracker is respecting the window | Wait it out; the bars shown are last-known, not stale-forever |
+| Gemini/OpenAI show only `key valid` | Those platforms expose no public per-key usage percentage | Expected — key health and model access is all that's available |
+| `tracker: command not found` | Installed into a venv that is not on `PATH` | `uv tool install .`, or use `PYTHONPATH=src python -m tracker.cli` |
+| Bars look wrong after an upgrade | Old samples in SQLite | `tracker sync` to force a fresh network pass |
+
+## FAQ
+
+**Does this switch accounts for me?** No. It is deliberately read-only
+observability. Auto-switching can be built on top of the same store later.
+
+**Does it send my data anywhere?** No. Everything is local: credentials in
+`~/.config/tracker/`, history in a local SQLite file. The only outbound calls
+are to the providers themselves, plus your own Discord webhook if you enable it.
+
+**Will this get my account banned?** It calls the same usage endpoints the
+official CLIs call, with the same credentials, less often than an active
+session would. That said, it is unofficial — see the disclaimer.
+
+**Why is the PyPI name different?** `tracker` is taken on PyPI, so the
+distribution is `ai-usage-tracker`. The command and import package are still
+`tracker`.
 
 ## Contributing
 
