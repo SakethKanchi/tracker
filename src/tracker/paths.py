@@ -41,3 +41,4 @@ def ensure_dirs() -> None:
 CLAUDE_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 GROK_AUTH_PATH = Path.home() / ".grok" / "auth.json"
 GROK_SESSIONS_DIR = Path.home() / ".grok" / "sessions"
+CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"

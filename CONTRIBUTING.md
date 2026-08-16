@@ -34,7 +34,7 @@ to exercise live collectors.
 src/tracker/
   cli.py            # entrypoint
   usage.py          # collect_all / backoff
-  providers/        # claude.py, grok.py
+  providers/        # claude.py, grok.py, codex.py, gemini.py, apikeys.py
   tui.py            # terminal rendering
   bot.py            # Discord webhook poller
   store.py          # SQLite
@@ -66,7 +66,7 @@ Include:
 
 - OS + Python version
 - Command you ran
-- Provider involved (`claude` / `grok`)
+- Provider involved (`claude` / `grok` / `codex` / `gemini` / `openai`)
 - Sanitized output (redact emails, tokens, webhook URLs)
 
 ## Code of conduct

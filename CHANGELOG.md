@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-08-03
+
+### Added
+
+- **Codex** provider: import from `~/.codex/auth.json`, WHAM usage windows
+  (`primary` / `secondary`), full OAuth refresh with write-back to the CLI file
+  (required because Codex refresh tokens are single-use)
+- **Gemini** provider: API-key accounts via Google AI Studio keys (`AIza…`)
+- **OpenAI** platform API-key accounts (`sk-…` / `sk-proj-…`)
+- Auto-detect API keys: `tracker add <api_key>` or `tracker --add <api_key>`
+  recognizes Claude (`sk-ant-`), Grok (`xai-`), Gemini (`AIza`), OpenAI (`sk-`)
+- Schema migration drops the legacy `accounts.provider` CHECK so new providers
+  work on existing databases
+
+### Changed
+
+- Dashboard / Discord / status cover claude, grok, codex, gemini, openai
+- Version bumped to 0.2.0
+
 ## [0.1.0] — 2026-08-03
 
 ### Added

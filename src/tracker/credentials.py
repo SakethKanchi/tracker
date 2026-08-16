@@ -5,6 +5,8 @@ Each is the raw JSON blob the provider's CLI writes, plus a small wrapper.
 
 Claude source: ~/.claude/.credentials.json → claudeAiOauth{accessToken,refreshToken,expiresAt,...}
 Grok source:   ~/.grok/auth.json → {access_token,refresh_token,expires_at,email,user_id,tier,...}
+Codex source:  ~/.codex/auth.json → {auth_mode, tokens:{access_token,refresh_token,...}, ...}
+API keys:      {auth_type: "api_key", provider, api_key}
 """
 
 from __future__ import annotations
@@ -48,6 +50,23 @@ def delete_credential(account_id: str) -> None:
         os.unlink(cred_path(account_id))
     except FileNotFoundError:
         pass
+
+
+def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
+    """Atomic replace of a JSON file at *path* with mode 0600."""
+    payload = json.dumps(data, indent=2).encode()
+    tmp_path = f"{path}.tmp.{os.getpid()}"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, CRED_PERMS)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(tmp_path, CRED_PERMS)
+    except OSError:
+        pass
+    os.replace(tmp_path, path)
 
 
 # ── Claude ──
@@ -158,19 +177,86 @@ def write_back_grok_auth(blob: dict[str, Any], source_path: str | None = None) -
     if not updated:
         return False
 
-    # Atomic replace so a crash mid-write cannot leave auth.json empty/corrupt
-    # (which also forces a CLI re-login).
-    payload = json.dumps(data, indent=2).encode()
-    tmp_path = f"{path}.tmp.{os.getpid()}"
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, CRED_PERMS)
+    _atomic_write_json(path, data)
+    return True
+
+
+# ── Codex ──
+
+def import_codex_credential(source_path: str | None = None) -> dict[str, Any] | None:
+    """Read the live ~/.codex/auth.json (ChatGPT OAuth mode).
+
+    Returns the full auth.json blob when it contains usable ChatGPT tokens,
+    or an API-key-only auth when OPENAI_API_KEY is set. Returns None when the
+    file is missing or empty of credentials.
+    """
+    path = source_path or str(paths.CODEX_AUTH_PATH)
     try:
-        os.write(fd, payload)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        with open(path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    tokens = data.get("tokens")
+    if isinstance(tokens, dict) and tokens.get("access_token"):
+        return data
+
+    # API-key mode in auth.json
+    api_key = data.get("OPENAI_API_KEY")
+    if isinstance(api_key, str) and api_key:
+        return {
+            "auth_type": "api_key",
+            "provider": "openai",
+            "api_key": api_key,
+            "source": "codex_auth_json",
+        }
+    return None
+
+
+def write_back_codex_auth(blob: dict[str, Any], source_path: str | None = None) -> bool:
+    """Update ~/.codex/auth.json after a successful token refresh.
+
+    Codex refresh tokens are **single-use**. If we refresh into the tracker
+    store but leave auth.json on the previous grant, the next Codex CLI call
+    hits ``refresh_token_reused`` and forces a browser re-login.
+
+    We only write when the live file exists and belongs to the same account
+    (matching account_id / access_token family). Returns True if updated.
+    """
+    if blob.get("auth_type") == "api_key":
+        return False
+    tokens = blob.get("tokens")
+    if not isinstance(tokens, dict) or not tokens.get("access_token"):
+        return False
+
+    path = source_path or str(paths.CODEX_AUTH_PATH)
     try:
-        os.chmod(tmp_path, CRED_PERMS)
-    except OSError:
-        pass
-    os.replace(tmp_path, path)
+        with open(path) as f:
+            live = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+    if not isinstance(live, dict):
+        return False
+
+    live_tokens = live.get("tokens") if isinstance(live.get("tokens"), dict) else {}
+    # Match by account_id when both have it; otherwise always push if live has tokens
+    blob_aid = tokens.get("account_id")
+    live_aid = live_tokens.get("account_id") if isinstance(live_tokens, dict) else None
+    if blob_aid and live_aid and blob_aid != live_aid:
+        return False
+
+    # Merge: keep non-token fields from live, overwrite tokens + last_refresh
+    merged = dict(live)
+    merged["tokens"] = dict(tokens)
+    if blob.get("last_refresh"):
+        merged["last_refresh"] = blob["last_refresh"]
+    if blob.get("auth_mode"):
+        merged["auth_mode"] = blob["auth_mode"]
+    # Preserve OPENAI_API_KEY field shape if present
+    if "OPENAI_API_KEY" in live and "OPENAI_API_KEY" not in merged:
+        merged["OPENAI_API_KEY"] = live["OPENAI_API_KEY"]
+
+    _atomic_write_json(path, merged)
     return True

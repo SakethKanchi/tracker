@@ -9,10 +9,14 @@ from typing import Any
 
 from . import paths
 
+# Known providers. Schema CHECK is intentionally omitted so new providers can
+# be added without a table rebuild; validation lives in the CLI / collectors.
+KNOWN_PROVIDERS = ("claude", "grok", "codex", "gemini", "openai")
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
     id                  TEXT PRIMARY KEY,
-    provider            TEXT NOT NULL CHECK(provider IN ('claude','grok')),
+    provider            TEXT NOT NULL,
     label               TEXT NOT NULL,
     email               TEXT,
     provider_account_id TEXT,
@@ -67,8 +71,54 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)
+    _migrate_accounts_provider_check(conn)
     paths.db_path().chmod(0o600)
     return conn
+
+
+def _migrate_accounts_provider_check(conn: sqlite3.Connection) -> None:
+    """Drop the legacy provider CHECK constraint (claude|grok only).
+
+    SQLite cannot ALTER CHECK in place; rebuild the accounts table when the
+    old constraint is present so codex/gemini/openai rows can be inserted.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'"
+    ).fetchone()
+    if not row or not row["sql"]:
+        return
+    sql_lower = row["sql"].lower().replace(" ", "")
+    # Old schema: CHECK(provider IN ('claude','grok'))
+    if "check(providerin(" not in sql_lower:
+        return
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.executescript(
+            """
+            BEGIN;
+            CREATE TABLE accounts_new (
+                id                  TEXT PRIMARY KEY,
+                provider            TEXT NOT NULL,
+                label               TEXT NOT NULL,
+                email               TEXT,
+                provider_account_id TEXT,
+                org_id              TEXT,
+                tier                TEXT,
+                is_active           INTEGER NOT NULL DEFAULT 1,
+                added_at            REAL NOT NULL
+            );
+            INSERT INTO accounts_new
+                (id,provider,label,email,provider_account_id,org_id,tier,is_active,added_at)
+            SELECT id,provider,label,email,provider_account_id,org_id,tier,is_active,added_at
+            FROM accounts;
+            DROP TABLE accounts;
+            ALTER TABLE accounts_new RENAME TO accounts;
+            COMMIT;
+            """
+        )
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
 
 
 # ── accounts ──

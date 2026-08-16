@@ -1,6 +1,6 @@
 # tracker
 
-**Unified local usage tracker for Claude and Grok accounts.**
+**Unified local usage tracker for Claude, Grok, Codex, Gemini, and OpenAI.**
 
 See every subscription's quota in one terminal command — no more logging into
 each account, checking usage, and logging out.
@@ -12,16 +12,19 @@ each account, checking usage, and logging out.
 
 ## Why
 
-If you juggle multiple Claude and/or Grok accounts, checking "who still has
-quota?" is a ritual. **tracker** imports credentials from the official CLIs,
-then:
+If you juggle multiple AI accounts, checking "who still has quota?" is a
+ritual. **tracker** imports credentials from official CLIs (or accepts pasted
+API keys), then:
 
 - `tracker` / `tracker list` — dashboard for **all** accounts at once
 - Refresh-if-stale collection (cached when fresh, network when not)
-- Honors Claude usage-endpoint 429 backoff so you keep last-known bars
+- Honors usage-endpoint 429 backoff so you keep last-known bars
+- Auto-detects API keys by prefix (`sk-ant-`, `xai-`, `AIza`, `sk-`)
 - Optional Discord webhook that posts and **edits** one live message
 
-Read-only observability. It does **not** auto-switch the active CLI account.
+Read-only observability for the CLI sessions you already use. Token refresh
+for Claude/Grok/Codex writes rotated grants back to the provider CLI file so
+you are not forced into a re-login loop.
 
 ## Screenshot
 
@@ -78,23 +81,29 @@ pip install -e .
 ### Requirements
 
 - Python **3.11+**
-- Official [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
-  and/or [Grok](https://grok.x.ai/) CLI already logged in for the accounts you
-  want to track
+- For subscription windows: the official provider CLI already logged in
+  ([Claude Code](https://docs.anthropic.com/en/docs/claude-code),
+  [Grok](https://grok.x.ai/),
+  [Codex](https://github.com/openai/codex))
+- For API-key accounts: a valid key from Anthropic / xAI / Google AI Studio /
+  OpenAI platform
 
 ## Quick start
 
 ```bash
-# 1. Log into the provider CLI for the account you want to track
-claude                 # or: grok login --oauth
+# 1. Import from a logged-in CLI
+claude                 # or: grok login --oauth  /  codex (ChatGPT sign-in)
+tracker add claude     # or: tracker add grok  /  tracker add codex
 
-# 2. Import that live credential into tracker's store
-tracker add claude     # or: tracker add grok
-#    → prompted for a short label
+# 2. Or paste an API key — provider is auto-detected
+tracker add sk-ant-api03-...     # Claude
+tracker add xai-...              # Grok
+tracker add AIza...              # Gemini
+tracker add sk-proj-...          # OpenAI platform
+# same thing via flag form:
+tracker --add "AIzaSy..."
 
-# 3. Repeat for other accounts (switch CLI login, then add again)
-
-# 4. See everything
+# 3. See everything
 tracker                # same as: tracker list
 tracker list --refresh # force network pass
 tracker status         # one-line aggregate
@@ -106,14 +115,33 @@ tracker status         # one-line aggregate
 |---------|----------------|
 | `tracker` / `tracker list` | Primary dashboard — all accounts, refresh-if-stale |
 | `tracker list --refresh` | Force-refresh every account, then show |
-| `tracker add claude` / `tracker add grok` | Import live credential from CLI config |
+| `tracker add claude\|grok\|codex` | Import live OAuth credential from CLI config |
+| `tracker add <api_key>` / `tracker --add <api_key>` | Auto-detect provider from key and add |
 | `tracker sync` / `tracker sync --label NAME` | Force-refresh (all or one label) |
-| `tracker tokens [--since 7d] [--provider claude\|grok]` | Historical token report |
+| `tracker tokens [--since 7d] [--provider …]` | Historical token report |
 | `tracker status` | Compact aggregate line |
 | `tracker remove LABEL` | Drop account + credential file |
-| `tracker log PROVIDER LABEL --msgs N --resets-in 1h30m` | Manual usage sample (Grok fallback) |
+| `tracker log PROVIDER LABEL --msgs N --resets-in 1h30m` | Manual usage sample |
 | `tracker webhook` / `tracker webhook --once` | Discord channel dashboard |
 | `tracker -V` | Version |
+
+## Providers
+
+| Provider | How to add | What you see |
+|----------|------------|--------------|
+| **Claude** | `tracker add claude` or `sk-ant-…` key | 5h / 7d / scoped / spend (OAuth); key health (API key) |
+| **Grok** | `tracker add grok` or `xai-…` key | Weekly + monthly credits (OAuth); key health (API key) |
+| **Codex** | `tracker add codex` (ChatGPT login) | Primary + secondary rate-limit windows via WHAM |
+| **Gemini** | `tracker add AIza…` | Key health + model list (no public % usage window) |
+| **OpenAI** | `tracker add sk-…` | Key health (platform billing is separate from Codex) |
+
+### Codex auth notes
+
+Codex ChatGPT refresh tokens are **single-use**. After a successful refresh,
+tracker writes the rotated tokens back to **both** its credential store and
+`~/.codex/auth.json` so the Codex CLI is not left with a dead grant
+(`refresh_token_reused`). Do not copy `auth.json` across machines while both
+sides keep refreshing.
 
 ## How freshness works
 

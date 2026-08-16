@@ -77,13 +77,25 @@ def _render_account_block(au: usage.AccountUsage) -> tuple[str, str]:
         header += f"  t{au.tier}"
 
     lines: list[str] = []
-    if au.error:
+    if au.error and not au.windows:
         lines.append(f"  error: {au.error}")
     elif not au.windows:
         lines.append("  no data")
     else:
         w = au.windows
-        if au.provider == "claude":
+        if w.get("auth_type") == "api_key" or au.provider in ("gemini", "openai"):
+            quota = w.get("quota_status")
+            if quota == "active":
+                lines.append("  key   valid")
+            elif quota == "blocked":
+                msg = w.get("quota_message") or w.get("quota_reason") or ""
+                lines.append(f"  key   blocked  {msg}".rstrip())
+            else:
+                msg = w.get("quota_message") or w.get("quota_reason") or quota or "unknown"
+                lines.append(f"  key   {msg}")
+            if w.get("model_count") is not None:
+                lines.append(f"  models {w['model_count']}")
+        elif au.provider == "claude":
             if au.needs_relogin:
                 lines.append("  re-login needed — refresh token dead")
             else:
@@ -113,7 +125,30 @@ def _render_account_block(au: usage.AccountUsage) -> tuple[str, str]:
                         f"  $$    ${spend['used']:.2f} / ${spend['limit']:.2f} "
                         f"({spend['pct']:.0f}%)"
                     )
-        else:  # grok
+        elif au.provider == "codex":
+            if au.needs_relogin:
+                lines.append("  re-login needed — refresh token dead")
+            else:
+                for key, default in (("primary", "pri"), ("secondary", "sec")):
+                    win = w.get(key)
+                    if not win:
+                        continue
+                    mins = win.get("window_minutes")
+                    if mins and mins <= 360:
+                        label = "5h"
+                    elif mins and mins <= 60 * 24 * 8:
+                        label = "wk"
+                    else:
+                        label = win.get("name") or default
+                    pct = win.get("pct")
+                    suffix = _reset_str(win.get("resets_at"))
+                    line = f"  {str(label):<5} {_plain_bar(pct)}"
+                    if suffix:
+                        line += f"  {suffix}"
+                    lines.append(line)
+                if w.get("limit_reached"):
+                    lines.append(f"  lim   {w.get('reached_type') or 'limit reached'}")
+        else:  # grok (OAuth)
             credit_pct = w.get("credit_usage_pct")
             if credit_pct is not None:
                 bar = _plain_bar(credit_pct)
@@ -163,11 +198,11 @@ def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
     """Return (code_block_text, embed_color) for the full dashboard."""
     worst = "dim"
     for au in results:
+        if au.needs_relogin:
+            worst = "red"
+            continue
+        w = au.windows or {}
         if au.provider == "claude":
-            if au.needs_relogin:
-                worst = "red"
-                continue
-            w = au.windows or {}
             for key in ("five_hour", "seven_day"):
                 win = w.get(key) or {}
                 pct = win.get("pct")
@@ -181,14 +216,27 @@ def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
                     sv = _severity(pct, blocked=False)
                     if _sev_rank(sv) > _sev_rank(worst):
                         worst = sv
+        elif au.provider == "codex":
+            for key in ("primary", "secondary"):
+                win = w.get(key) or {}
+                pct = win.get("pct")
+                if pct is not None:
+                    sv = _severity(pct, blocked=bool(w.get("limit_reached")))
+                    if _sev_rank(sv) > _sev_rank(worst):
+                        worst = sv
+        elif w.get("auth_type") == "api_key" or au.provider in ("gemini", "openai"):
+            if w.get("quota_status") == "blocked":
+                if _sev_rank("red") > _sev_rank(worst):
+                    worst = "red"
+            elif w.get("quota_status") == "error":
+                if _sev_rank("yellow") > _sev_rank(worst):
+                    worst = "yellow"
         else:
-            w = au.windows or {}
             pct = w.get("credit_usage_pct")
             blocked = w.get("quota_status") == "blocked"
             sv = _severity(pct, blocked)
             if _sev_rank(sv) > _sev_rank(worst):
                 worst = sv
-            # Monthly billing also affects severity
             mo_pct = w.get("monthly_pct")
             if mo_pct is not None:
                 sv = _severity(mo_pct, blocked=False)
@@ -199,12 +247,16 @@ def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
     for au in results:
         by_provider.setdefault(au.provider, []).append(au)
 
+    labels = {
+        "claude": "Claude", "grok": "Grok", "codex": "Codex",
+        "gemini": "Gemini", "openai": "OpenAI",
+    }
     out: list[str] = []
-    for provider in ("claude", "grok"):
+    for provider in ("claude", "grok", "codex", "gemini", "openai"):
         accts = by_provider.get(provider)
         if not accts:
             continue
-        out.append(f"{provider.capitalize()}  ({len(accts)})")
+        out.append(f"{labels.get(provider, provider)}  ({len(accts)})")
         for au in accts:
             header, body = _render_account_block(au)
             out.append(header)

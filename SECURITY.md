@@ -37,5 +37,6 @@ webhook URL handling, etc.):
 - Run only on a personal machine with a locked-down user account.
 - Prefer `chmod 700 ~/.config/tracker` if you share the host.
 - Rotate Discord webhooks if the URL may have leaked.
-- Re-login + `tracker add <provider>` after any suspected token compromise;
+- Re-login + `tracker add <provider>` (or paste a new API key) after any
+  suspected token compromise;
   then remove old labels with `tracker remove <label>`.

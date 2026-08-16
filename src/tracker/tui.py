@@ -138,6 +138,10 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
         return [Text("  no data", style="dim")]
 
     w = au.windows
+    # API-key mode shares the generic health formatter
+    if w.get("auth_type") == "api_key":
+        return _format_windows_apikey(au)
+
     lines: list[tuple[str, Text]] = []
 
     credit_pct = w.get("credit_usage_pct")
@@ -205,6 +209,112 @@ def _format_windows_grok(au: AccountUsage) -> list[Text]:
     return _format_tree_lines(lines)
 
 
+def _format_windows_codex(au: AccountUsage) -> list[Text]:
+    """Codex / ChatGPT subscription windows (primary + secondary)."""
+    if au.needs_relogin:
+        return [Text("  re-login needed — refresh token dead", style="bold red")]
+    if au.error and not au.windows:
+        return [Text(f"  {au.error}", style="red")]
+    if not au.windows:
+        return [Text("  no data", style="dim")]
+
+    w = au.windows
+    lines: list[tuple[str, Text]] = []
+
+    for key, default_label in (("primary", "pri"), ("secondary", "sec")):
+        win = w.get(key)
+        if not win:
+            continue
+        pct = win.get("pct")
+        mins = win.get("window_minutes")
+        if mins and mins <= 360:
+            label = "5h"
+        elif mins and mins <= 60 * 24 * 8:
+            label = "wk"
+        elif mins:
+            label = "mo"
+        else:
+            label = win.get("name") or default_label
+        bar = _bar(pct)
+        suffix = _reset_str(win.get("resets_at"))
+        if suffix:
+            bar.append(f"  {suffix}", style="dim")
+        lines.append((str(label)[:6], bar))
+
+    for s in w.get("scoped") or []:
+        pct = s.get("pct")
+        bar = _bar(pct)
+        suffix = _reset_str(s.get("resets_at"))
+        if suffix:
+            bar.append(f"  {suffix}", style="dim")
+        name = str(s.get("name") or "extra")[:6]
+        lines.append((name, bar))
+
+    credits = w.get("credits")
+    if isinstance(credits, dict) and credits.get("has_credits"):
+        if credits.get("unlimited"):
+            lines.append(("cr", Text(" unlimited", style="green")))
+        elif credits.get("balance") is not None:
+            lines.append(("cr", Text(f" {credits['balance']}", style="magenta")))
+
+    if w.get("limit_reached") or w.get("reached_type"):
+        msg = w.get("reached_type") or "limit reached"
+        lines.append(("lim", Text(f" {msg}", style="bold red")))
+
+    if au.error:
+        lines.append(("err", Text(f" {au.error}", style="red")))
+
+    return _format_tree_lines(lines) if lines else [Text("  no windows", style="dim")]
+
+
+def _format_windows_apikey(au: AccountUsage) -> list[Text]:
+    """Generic formatter for API-key accounts (gemini/openai/claude-key/grok-key)."""
+    if au.error and not au.windows:
+        return [Text(f"  {au.error}", style="red")]
+    if not au.windows:
+        return [Text("  no data", style="dim")]
+
+    w = au.windows
+    lines: list[tuple[str, Text]] = []
+
+    quota = w.get("quota_status")
+    if quota == "active":
+        lines.append(("key", Text(" valid", style="green")))
+    elif quota == "blocked":
+        msg = w.get("quota_message") or w.get("quota_reason") or "blocked"
+        lines.append(("key", Text.assemble(
+            (" blocked", "bold red"),
+            (f"  {msg}", "red"),
+        )))
+    elif quota == "error":
+        msg = w.get("quota_message") or w.get("quota_reason") or "auth error"
+        lines.append(("key", Text.assemble(
+            (" invalid", "bold red"),
+            (f"  {msg}", "red"),
+        )))
+    else:
+        lines.append(("key", Text(f" {quota or 'unknown'}", style="dim")))
+
+    if w.get("model_count") is not None:
+        lines.append(("models", Text(f" {w['model_count']}", style="dim")))
+
+    samples = w.get("sample_models") or []
+    if samples:
+        shown = ", ".join(samples[:2])
+        lines.append(("e.g.", Text(f" {shown}", style="dim")))
+
+    note = w.get("note")
+    if note and not samples:
+        # Shorten long notes
+        short = note if len(note) <= 60 else note[:57] + "..."
+        lines.append(("", Text(f" {short}", style="dim")))
+
+    if au.error and quota != "error":
+        lines.append(("err", Text(f" {au.error}", style="red")))
+
+    return _format_tree_lines(lines)
+
+
 def _fmt_tok(n: int) -> str:
     """Format token counts compactly: 229M, 2.1M, 850K."""
     if n >= 1_000_000:
@@ -257,10 +367,36 @@ def _source_tag(au: AccountUsage) -> Text:
     return Text.assemble(*parts)
 
 
+_PROVIDER_LABELS = {
+    "claude": "Claude",
+    "grok": "Grok",
+    "codex": "Codex",
+    "gemini": "Gemini",
+    "openai": "OpenAI",
+}
+
+
+def _format_windows_for(au: AccountUsage) -> list[Text]:
+    if au.windows and au.windows.get("auth_type") == "api_key":
+        return _format_windows_apikey(au)
+    if au.provider == "claude":
+        return _format_windows_claude(au)
+    if au.provider == "grok":
+        return _format_windows_grok(au)
+    if au.provider == "codex":
+        return _format_windows_codex(au)
+    if au.provider in ("gemini", "openai"):
+        return _format_windows_apikey(au)
+    return _format_windows_apikey(au)
+
+
 def render_accounts(results: list[AccountUsage]) -> None:
     """Render the all-accounts usage dashboard as a compact tree."""
     if not results:
-        console.print("[dim]No accounts added yet. Run:[/dim]  tracker add <provider>")
+        console.print(
+            "[dim]No accounts added yet. Run:[/dim]  "
+            "tracker add claude|grok|codex  [dim]or[/dim]  tracker add <api_key>"
+        )
         return
 
     # Group by provider
@@ -269,61 +405,65 @@ def render_accounts(results: list[AccountUsage]) -> None:
         by_provider.setdefault(au.provider, []).append(au)
 
     lines: list[Text] = []
-    provider_order = ["claude", "grok"]
-    for pi, provider in enumerate(provider_order):
+    provider_order = ["claude", "grok", "codex", "gemini", "openai"]
+    # Include any unknown providers at the end
+    for p in by_provider:
+        if p not in provider_order:
+            provider_order.append(p)
+
+    rendered_providers = 0
+    for provider in provider_order:
         accounts = by_provider.get(provider, [])
         if not accounts:
             continue
 
-        # Provider header
+        if rendered_providers > 0:
+            lines.append(Text(""))
+        rendered_providers += 1
+
+        title = _PROVIDER_LABELS.get(provider, provider.capitalize())
         lines.append(Text.assemble(
-            (provider.capitalize(), "bold"),
+            (title, "bold"),
             (f"  ({len(accounts)})", "dim"),
         ))
 
         for ai, au in enumerate(accounts):
-            # Account header — plain, no tree connector (cswap style)
             header = Text.assemble(
                 (f"  {au.label}", "bold"),
             )
             if au.email and au.email != au.label:
                 header.append(Text(f"  {au.email}", style="dim"))
-            if au.tier:
-                header.append(Text(f"  t{au.tier}", style="dim"))
+            if au.tier and au.tier != "api_key":
+                header.append(Text(f"  {au.tier}", style="dim"))
+            elif au.tier == "api_key":
+                header.append(Text("  api-key", style="dim"))
             header.append(Text("  [", style="dim"))
             header.append(_source_tag(au))
             header.append(Text("]", style="dim"))
             lines.append(header)
 
-            # Window lines — indented with ├/└
-            if au.provider == "claude":
-                win_lines = _format_windows_claude(au)
-            else:
-                win_lines = _format_windows_grok(au)
-            for wl in win_lines:
+            for wl in _format_windows_for(au):
                 lines.append(wl)
 
-            # Blank line between accounts (not after the last one)
             if ai < len(accounts) - 1:
                 lines.append(Text(""))
 
-        if pi < len(provider_order) - 1:
-            lines.append(Text(""))
-
-    console.print(Text.assemble(*[Text("\n")] ) if not lines else Text("\n").join(lines))
+    console.print(Text("\n").join(lines) if lines else "")
 
 
 def render_status(results: list[AccountUsage]) -> None:
     """One-line aggregate summary."""
-    claude_accts = [r for r in results if r.provider == "claude"]
-    grok_accts = [r for r in results if r.provider == "grok"]
-
     parts: list[str] = []
-    parts.append(f"{len(claude_accts)} Claude")
-    parts.append(f"{len(grok_accts)} Grok")
+    for provider in ("claude", "grok", "codex", "gemini", "openai"):
+        n = sum(1 for r in results if r.provider == provider)
+        if n:
+            parts.append(f"{n} {_PROVIDER_LABELS.get(provider, provider)}")
 
+    if not parts:
+        parts.append("0 accounts")
+
+    claude_accts = [r for r in results if r.provider == "claude"]
     max_7d: float | None = None
-    relogin_count = sum(1 for r in claude_accts if r.needs_relogin)
     for r in claude_accts:
         if r.windows and r.windows.get("seven_day"):
             pct = r.windows["seven_day"].get("pct")
@@ -331,11 +471,18 @@ def render_status(results: list[AccountUsage]) -> None:
                 max_7d = pct
     if max_7d is not None:
         parts.append(f"max 7d: {max_7d:.0f}%")
+
+    relogin_count = sum(1 for r in results if r.needs_relogin)
     if relogin_count:
         parts.append(f"{relogin_count} need re-login")
-    grok_blocked = sum(1 for r in grok_accts if r.windows and r.windows.get("quota_status") == "blocked")
+
+    grok_blocked = sum(
+        1 for r in results
+        if r.provider == "grok" and r.windows and r.windows.get("quota_status") == "blocked"
+    )
     if grok_blocked:
         parts.append(f"{grok_blocked} Grok blocked")
+
     console.print("  · ".join(parts))
 
 

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-usage-tracker"
-version = "0.1.0"
-description = "Unified local usage tracker for Claude and Grok accounts"
+version = "0.2.0"
+description = "Unified local usage tracker for Claude, Grok, Codex, Gemini, and OpenAI"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -16,6 +16,9 @@ authors = [
 keywords = [
     "claude",
     "grok",
+    "codex",
+    "gemini",
+    "openai",
     "anthropic",
     "xai",
     "usage",
