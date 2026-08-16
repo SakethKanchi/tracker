@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-08-16
+
+### Changed
+
+- **PyPI distribution renamed to `ai-quota-tracker`.** The previously documented
+  name `ai-usage-tracker` was already claimed on PyPI by an unrelated project.
+  The console command and import package are unchanged (`tracker`).
+- Packaging metadata: author email, `Changelog` project URL, `End Users/Desktop`
+  and `System :: Monitoring` classifiers, `CHANGELOG.md` + `SECURITY.md` shipped
+  in the sdist.
+- README links and the demo screenshot now use absolute URLs so they render on
+  the PyPI project page.
+
+### Added
+
+- CI workflow (`.github/workflows/ci.yml`): install, byte-compile, CLI smoke
+  test, and `twine check` on Python 3.11–3.13.
+- README troubleshooting table and FAQ.
+- Demo screenshots now cover all five providers (previously only Claude + Grok).
+
 ## [0.2.0] — 2026-08-03
 
 ### Added

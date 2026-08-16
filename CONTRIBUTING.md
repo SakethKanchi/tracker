@@ -72,3 +72,39 @@ Include:
 ## Code of conduct
 
 Be kind. No harassment, no spam, no dumping credentials into issues.
+
+## Releasing to PyPI
+
+The distribution is **`ai-quota-tracker`** (both `tracker` and
+`ai-usage-tracker` were already taken on PyPI); the console command and import
+package stay `tracker`.
+
+Publishing is automated by `.github/workflows/publish.yml` using **PyPI Trusted
+Publishing (OIDC)** — no API token is stored in the repo.
+
+**One-time setup** at <https://pypi.org/manage/account/publishing/> → "Add a new
+pending publisher":
+
+| Field | Value |
+|-------|-------|
+| PyPI Project Name | `ai-quota-tracker` |
+| Owner | `SakethKanchi` |
+| Repository name | `tracker` |
+| Workflow name | `publish.yml` |
+| Environment name | `pypi` |
+
+**Each release:**
+
+1. Bump `version` in `pyproject.toml` **and** `__version__` in
+   `src/tracker/__init__.py` — the workflow fails if the tag does not match.
+2. Add a `CHANGELOG.md` entry.
+3. Commit, then tag and push:
+   ```bash
+   git tag v0.2.1
+   git push origin v0.2.1
+   ```
+4. The workflow builds, runs `twine check --strict`, installs the wheel into a
+   clean venv and smoke-tests the CLI, verifies tag == version, then publishes.
+
+Versions on PyPI are **immutable and cannot be reused**, so let the workflow's
+checks run instead of uploading by hand.

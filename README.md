@@ -6,7 +6,7 @@ See every subscription's quota in one terminal command — no more logging into
 each account, checking usage, and logging out.
 
 [![CI](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/SakethKanchi/tracker/blob/master/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 ---
@@ -30,7 +30,7 @@ you are not forced into a re-login loop.
 
 ## Screenshot
 
-![tracker list dashboard](docs/images/list.svg)
+![tracker list dashboard](https://raw.githubusercontent.com/SakethKanchi/tracker/master/docs/images/list.svg)
 
 ```
 Claude  (2)
@@ -82,7 +82,20 @@ OpenAI  (1)
 
 ## Install
 
-### From source (recommended while pre-release)
+```bash
+uv tool install ai-quota-tracker    # recommended — isolated, on PATH
+# or:
+pipx install ai-quota-tracker
+# or:
+pip install ai-quota-tracker
+
+tracker --help
+```
+
+The distribution is **`ai-quota-tracker`**; the command and import package are
+both `tracker`.
+
+### From source
 
 ```bash
 git clone https://github.com/SakethKanchi/tracker.git
@@ -91,9 +104,6 @@ uv tool install .          # installs the `tracker` CLI
 # or:  pip install .
 tracker --help
 ```
-
-PyPI distribution name is **`ai-usage-tracker`** (the generic name `tracker` is
-taken); the console command and import package remain `tracker`.
 
 Editable install for development:
 
@@ -193,7 +203,7 @@ tracker webhook --once   # smoke test
 tracker webhook          # long-running poller
 ```
 
-Full setup (including systemd user unit): **[docs/discord-webhook.md](docs/discord-webhook.md)**.
+Full setup (including systemd user unit): **[docs/discord-webhook.md](https://github.com/SakethKanchi/tracker/blob/master/docs/discord-webhook.md)**.
 
 ## Data locations
 
@@ -203,14 +213,14 @@ Full setup (including systemd user unit): **[docs/discord-webhook.md](docs/disco
 | `~/.local/share/tracker/tracker.db` | Usage history + backoff state |
 | `~/.config/tracker/webhook.json` | Discord webhook config |
 
-Credentials are **local only**. See [SECURITY.md](SECURITY.md).
+Credentials are **local only**. See [SECURITY.md](https://github.com/SakethKanchi/tracker/blob/master/SECURITY.md).
 
 ## Architecture
 
 Provider collectors → SQLite → rich TUI (and optional Discord embed).
 
-Details: **[docs/architecture.md](docs/architecture.md)**  
-Original design notes: [docs/superpowers/specs/2026-07-28-tracker-design.md](docs/superpowers/specs/2026-07-28-tracker-design.md)
+Details: **[docs/architecture.md](https://github.com/SakethKanchi/tracker/blob/master/docs/architecture.md)**  
+Original design notes: [docs/superpowers/specs/2026-07-28-tracker-design.md](https://github.com/SakethKanchi/tracker/blob/master/docs/superpowers/specs/2026-07-28-tracker-design.md)
 
 ## Prior art
 
@@ -244,13 +254,13 @@ are to the providers themselves, plus your own Discord webhook if you enable it.
 official CLIs call, with the same credentials, less often than an active
 session would. That said, it is unofficial — see the disclaimer.
 
-**Why is the PyPI name different?** `tracker` is taken on PyPI, so the
-distribution is `ai-usage-tracker`. The command and import package are still
-`tracker`.
+**Why is the PyPI name different?** `tracker` and `ai-usage-tracker` are both
+taken on PyPI, so the distribution is `ai-quota-tracker`. The command and import
+package are still `tracker`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports welcome — please redact
+See [CONTRIBUTING.md](https://github.com/SakethKanchi/tracker/blob/master/CONTRIBUTING.md). Bug reports welcome — please redact
 emails, tokens, and webhook URLs.
 
 ```bash
@@ -260,7 +270,7 @@ PYTHONPATH=src python scripts/generate_screenshots.py
 
 ## License
 
-[MIT](LICENSE) © 2026 sakethkanchi
+[MIT](https://github.com/SakethKanchi/tracker/blob/master/LICENSE) © 2026 sakethkanchi
 
 ## Disclaimer
 
