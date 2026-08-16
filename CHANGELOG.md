@@ -18,8 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README links and the demo screenshot now use absolute URLs so they render on
   the PyPI project page.
 
+### Added
+
+- `tracker status` now names the account with the most headroom
+  (`best: Grok main  95% free`), computed as `100 - worst window used` across
+  every window a provider reports.
+
 ### Fixed
 
+- Progress bars adapt to the terminal width. The bar was hard-coded to 20
+  chars, so on panes narrower than ~60 columns lines wrapped and the ├/└ tree
+  connectors broke apart. Bars now shrink to a floor of 8 chars and long emails
+  are elided, so no line overflows at any width (verified 40-200 columns).
+- Percentages above 100 or below 0 no longer overflow the bar; the true value
+  is still printed.
 - Ship a `py.typed` marker. The package declared the `Typing :: Typed`
   classifier but shipped no marker, so type checkers silently ignored its
   annotations in downstream projects (PEP 561).

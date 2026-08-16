@@ -18,6 +18,33 @@ from .usage import AccountUsage
 console = Console()
 
 BAR_WIDTH = 20
+MIN_BAR_WIDTH = 8
+
+# Longest trailing text a bar line can carry, e.g. "  resets in 27d23h".
+_RESET_SUFFIX_BUDGET = 20
+# "  <connector> <label> " + " 100%"
+_TREE_CHROME_BUDGET = 16
+
+
+def _term_width() -> int:
+    """Current terminal width, with a sane fallback for pipes and CI."""
+    try:
+        cols = console.size.width
+    except Exception:  # pragma: no cover - not a tty
+        return 80
+    return cols if cols and cols > 0 else 80
+
+
+def _bar_width() -> int:
+    """Bar width that fits the current terminal.
+
+    The tree lines are ``  ├ <label> <bar> <pct>  resets in …``. On an 80-col
+    terminal the full 20-char bar fits; on a narrow pane it must shrink or the
+    line wraps and the tree connectors break apart.
+    """
+    cols = _term_width()
+    available = cols - _TREE_CHROME_BUDGET - _RESET_SUFFIX_BUDGET
+    return max(MIN_BAR_WIDTH, min(BAR_WIDTH, available))
 
 
 def _age_str(fetched_at: float | None) -> str:
@@ -65,13 +92,20 @@ def _pct_color(pct: float) -> str:
     return "cyan"
 
 
-def _bar(pct: float | None) -> Text:
-    """A 20-char progress bar followed by the percentage."""
+def _bar(pct: float | None, width: int | None = None) -> Text:
+    """A progress bar followed by the percentage.
+
+    ``width`` defaults to whatever fits the current terminal. Percentages are
+    clamped to 0-100 for the bar itself, but the true value is still printed so
+    a provider reporting >100% stays visible rather than being silently hidden.
+    """
     if pct is None:
         return Text("—", style="dim")
-    filled = int(round(pct / 100 * BAR_WIDTH))
-    filled = max(0, min(BAR_WIDTH, filled))
-    bar = "█" * filled + "░" * (BAR_WIDTH - filled)
+    w = width if width is not None else _bar_width()
+    clamped = max(0.0, min(100.0, float(pct)))
+    filled = int(round(clamped / 100 * w))
+    filled = max(0, min(w, filled))
+    bar = "█" * filled + "░" * (w - filled)
     return Text.assemble(
         (bar, _pct_color(pct)),
         (f" {pct:>3.0f}%", _pct_color(pct)),
@@ -431,8 +465,15 @@ def render_accounts(results: list[AccountUsage]) -> None:
             header = Text.assemble(
                 (f"  {au.label}", "bold"),
             )
+            # Drop the email when it would push the header past the terminal
+            # width (it is redundant with the label in most setups anyway).
+            tag_len = len(au.source) + len(_age_str(au.fetched_at)) + 6
+            budget = _term_width() - len(au.label) - tag_len - 4
             if au.email and au.email != au.label:
-                header.append(Text(f"  {au.email}", style="dim"))
+                if len(au.email) <= budget:
+                    header.append(Text(f"  {au.email}", style="dim"))
+                elif budget > 6:
+                    header.append(Text(f"  {au.email[:budget - 2]}…", style="dim"))
             if au.tier and au.tier != "api_key":
                 header.append(Text(f"  {au.tier}", style="dim"))
             elif au.tier == "api_key":
@@ -449,6 +490,51 @@ def render_accounts(results: list[AccountUsage]) -> None:
                 lines.append(Text(""))
 
     console.print(Text("\n").join(lines) if lines else "")
+
+
+def _headroom_pct(au: AccountUsage) -> float | None:
+    """Remaining headroom (0-100) for an account, or None if unknown.
+
+    The dashboard shows *usage*; the question a user actually asks is "which
+    account has room left?". Headroom is ``100 - worst window used``: the
+    binding constraint, since hitting any one window blocks the account.
+    """
+    w = au.windows or {}
+    if au.needs_relogin:
+        return None
+    if w.get("quota_status") == "blocked" or w.get("limit_reached"):
+        return 0.0
+
+    used: list[float] = []
+
+    def _take(v: object) -> None:
+        if isinstance(v, (int, float)):
+            used.append(float(v))
+
+    for key in ("five_hour", "seven_day", "primary", "secondary"):
+        win = w.get(key)
+        if isinstance(win, dict):
+            _take(win.get("pct"))
+    for key in ("credit_usage_pct", "monthly_pct"):
+        _take(w.get(key))
+    for s in w.get("scoped") or []:
+        if isinstance(s, dict):
+            _take(s.get("pct"))
+
+    if not used:
+        return None
+    return max(0.0, 100.0 - max(used))
+
+
+def _best_account(results: list[AccountUsage]) -> AccountUsage | None:
+    """The account with the most headroom, for the 'use this next' hint."""
+    scored = [
+        (h, au) for au, h in ((au, _headroom_pct(au)) for au in results)
+        if h is not None and h > 0
+    ]
+    if not scored:
+        return None
+    return max(scored, key=lambda t: t[0])[1]
 
 
 def render_status(results: list[AccountUsage]) -> None:
@@ -484,6 +570,17 @@ def render_status(results: list[AccountUsage]) -> None:
         parts.append(f"{grok_blocked} Grok blocked")
 
     console.print("  · ".join(parts))
+
+    # The actionable line: which account still has room.
+    best = _best_account(results)
+    if best is not None:
+        headroom = _headroom_pct(best)
+        label = best.label or best.email or best.provider
+        console.print(Text.assemble(
+            ("  best: ", "dim"),
+            (f"{_PROVIDER_LABELS.get(best.provider, best.provider)} {label}", "bold green"),
+            (f"  {headroom:.0f}% free", "green"),
+        ))
 
 
 def render_tokens(rows: list, since: str | None = None) -> None:

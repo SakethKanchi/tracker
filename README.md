@@ -23,6 +23,9 @@ the question in one command.
 - Honors usage-endpoint 429 backoff so you keep last-known bars
 - Auto-detects API keys by prefix (`sk-ant-`, `xai-`, `AIza`, `sk-`)
 - Optional Discord webhook that posts and **edits** one live message
+- `tracker status` names the account with the most quota left, so you don't
+  have to eyeball five sets of bars
+- Bars adapt to the terminal width instead of wrapping in a narrow pane
 
 Read-only observability for the CLI sessions you already use. Token refresh
 for Claude/Grok/Codex writes rotated grants back to the provider CLI file so
@@ -71,10 +74,12 @@ OpenAI  (1)
   └ key  blocked  insufficient_quota
 ```
 
-`tracker status` compresses the same data to one line:
+`tracker status` compresses the same data to one line, and names the account
+with the most headroom left:
 
 ```
 2 Claude · 2 Grok · 1 Codex · 1 Gemini · 1 OpenAI · max 7d: 88% · 1 Grok blocked
+  best: Grok main  95% free
 ```
 
 > Demo data is synthetic (`scripts/generate_screenshots.py`); no real account
