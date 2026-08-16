@@ -108,3 +108,6 @@ pending publisher":
 
 Versions on PyPI are **immutable and cannot be reused**, so let the workflow's
 checks run instead of uploading by hand.
+
+> A manual `workflow_dispatch` run of `publish.yml` is a **dry run**: it builds
+> and verifies but never uploads. Only pushing a `v*` tag publishes.

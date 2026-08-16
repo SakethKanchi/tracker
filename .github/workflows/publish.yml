@@ -3,12 +3,19 @@ name: Publish to PyPI
 # Publishes on a version tag (v0.2.1) or manual dispatch.
 #
 # Auth uses PyPI Trusted Publishing (OIDC) — no API token stored in GitHub.
-# One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
+#
+# One-time setup on PyPI (https://pypi.org/manage/account/publishing/ →
+# "Add a new pending publisher"). These values are the exact OIDC claims this
+# workflow sends, confirmed from a real run:
 #   PyPI Project Name: ai-quota-tracker
 #   Owner:             SakethKanchi
 #   Repository name:   tracker
 #   Workflow name:     publish.yml
 #   Environment name:  pypi
+#
+# Until that publisher exists, the publish job fails with `invalid-publisher`
+# ("valid token, but no corresponding publisher"). That is the expected state
+# before setup — the build job above it still validates the release.
 on:
   push:
     tags: ["v*"]
@@ -52,6 +59,10 @@ jobs:
 
   publish:
     needs: build
+    # Only a version tag publishes. A manual run is a dry run: it builds and
+    # verifies, but never uploads (PyPI versions are immutable — a bad upload
+    # burns the version permanently).
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
