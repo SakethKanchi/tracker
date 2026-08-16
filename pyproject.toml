@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-quota-tracker"
-version = "0.2.1"
+version = "0.2.2"
 description = "See every AI subscription's remaining quota in one terminal command (Claude, Grok, Codex, Gemini, OpenAI)"
 readme = "README.md"
 license = "MIT"
