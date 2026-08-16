@@ -111,3 +111,32 @@ checks run instead of uploading by hand.
 
 > A manual `workflow_dispatch` run of `publish.yml` is a **dry run**: it builds
 > and verifies but never uploads. Only pushing a `v*` tag publishes.
+
+### If the publish job fails with `invalid-publisher`
+
+```
+* `invalid-publisher`: valid token, but no corresponding publisher
+  (Publisher with matching claims was not found)
+```
+
+This means the **pending publisher has not been created on PyPI yet** — having a
+PyPI account is not sufficient on its own. Create it at
+<https://pypi.org/manage/account/publishing/> using the table above.
+
+Nothing is uploaded when this happens, so the version is **not** burned: delete
+the tag and re-push it after finishing the setup.
+
+```bash
+git push --delete origin v0.2.1 && git tag -d v0.2.1
+# ...register the publisher, then:
+git tag v0.2.1 && git push origin v0.2.1
+```
+
+**API-token alternative.** If you prefer a token over trusted publishing, create
+one at <https://pypi.org/manage/account/token/>, add it as the repo secret
+`PYPI_API_TOKEN`, and give the publish step:
+
+```yaml
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+```

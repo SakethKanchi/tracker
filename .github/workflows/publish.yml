@@ -73,5 +73,7 @@ jobs:
           name: dist
           path: dist/
 
+      # Trusted publishing (OIDC) — no password/token needed here.
+      # If you would rather use an API token, see CONTRIBUTING.md.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
