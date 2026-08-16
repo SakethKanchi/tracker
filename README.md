@@ -6,6 +6,7 @@ See every subscription's quota in one terminal command — no more logging into
 each account, checking usage, and logging out.
 
 [![CI](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/ai-quota-tracker.svg)](https://pypi.org/project/ai-quota-tracker/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/SakethKanchi/tracker/blob/master/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
