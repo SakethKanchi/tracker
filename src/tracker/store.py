@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from typing import Any
 
 from . import paths
+
+logger = logging.getLogger("tracker")
 
 # Known providers. Schema CHECK is intentionally omitted so new providers can
 # be added without a table rebuild; validation lives in the CLI / collectors.
@@ -60,6 +63,8 @@ CREATE TABLE IF NOT EXISTS fetch_state (
 );
 CREATE INDEX IF NOT EXISTS idx_usage_samples_account ON usage_samples(account_id, fetched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_token_usage_account ON token_usage(account_id, ts DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_token_usage_dedup
+    ON token_usage(account_id, session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_rate_limit_account ON rate_limit_events(account_id, ts DESC);
 """
 
@@ -70,10 +75,73 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    _dedupe_token_usage(conn)
     conn.executescript(_SCHEMA)
     _migrate_accounts_provider_check(conn)
     paths.db_path().chmod(0o600)
     return conn
+
+
+def _dedupe_token_usage(conn: sqlite3.Connection) -> None:
+    """Collapse duplicate token_usage rows left by pre-0.2.2 syncs.
+
+    ``insert_token_usage`` used INSERT OR IGNORE, but the table had no UNIQUE
+    constraint for it to act on, so every sync re-inserted the full transcript
+    history. Databases grew to millions of rows (99.9% duplicates) and the
+    aggregate query in derive_usage_summary slowed to seconds.
+
+    This runs before the schema so the new UNIQUE index can be created. It is
+    a no-op once the table is clean, and cheap to check.
+    """
+    tbl = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'"
+    ).fetchone()
+    if not tbl:
+        return
+    have = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_token_usage_dedup'"
+    ).fetchone()
+    if have:
+        return  # already migrated; UNIQUE index keeps it clean from here on
+
+    dupes = conn.execute(
+        "SELECT COUNT(*) - COUNT(DISTINCT account_id || '|' || session_id || '|' || ts)"
+        " FROM token_usage"
+    ).fetchone()[0]
+    if not dupes:
+        return
+
+    logger.info("Removing %d duplicate token_usage rows (one-time migration)", dupes)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.executescript(
+            """
+            BEGIN;
+            CREATE TEMP TABLE _tu_keep AS
+                SELECT account_id, session_id, ts,
+                       MAX(model) AS model,
+                       MAX(input_tokens) AS input_tokens,
+                       MAX(output_tokens) AS output_tokens,
+                       MAX(cache_tokens) AS cache_tokens,
+                       MAX(reasoning_tokens) AS reasoning_tokens,
+                       MAX(cost_usd_ticks) AS cost_usd_ticks,
+                       MAX(cost_estimate) AS cost_estimate
+                FROM token_usage
+                GROUP BY account_id, session_id, ts;
+            DELETE FROM token_usage;
+            INSERT INTO token_usage
+                (account_id,session_id,ts,model,input_tokens,output_tokens,
+                 cache_tokens,reasoning_tokens,cost_usd_ticks,cost_estimate)
+                SELECT account_id,session_id,ts,model,input_tokens,output_tokens,
+                       cache_tokens,reasoning_tokens,cost_usd_ticks,cost_estimate
+                FROM _tu_keep;
+            DROP TABLE _tu_keep;
+            COMMIT;
+            """
+        )
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("VACUUM")
 
 
 def _migrate_accounts_provider_check(conn: sqlite3.Connection) -> None:

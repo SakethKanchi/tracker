@@ -250,6 +250,11 @@ def _parse_updates_file(
     try:
         with open(path) as f:
             for line in f:
+                # Fast reject before json.loads. Only ~1% of transcript lines
+                # are turn_completed, but parsing every line costs seconds
+                # across hundreds of MB of session history.
+                if "turn_completed" not in line:
+                    continue
                 line = line.strip()
                 if not line:
                     continue

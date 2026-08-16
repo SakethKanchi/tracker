@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`tracker list --refresh` took ~18s; now ~3s.** Three separate causes:
+  - `token_usage` had no UNIQUE constraint, so the `INSERT OR IGNORE` in
+    `insert_token_usage` never deduped. Every sync re-inserted the full grok
+    transcript history: 4,493,404 rows for 1,464 real events (each counted
+    4,450x) in an 808 MB database. Added a UNIQUE index on
+    (account_id, session_id, ts) plus a one-time migration that collapses
+    existing duplicates and VACUUMs. Database is now 9.1 MB.
+  - **This also corrupted reported totals.** Because duplicates were summed,
+    lifetime grok cost displayed as $10,463,928 instead of the true $5,892.
+    Token counts were inflated by the same factor.
+  - `_parse_updates_file` ran `json.loads` on every line of 653 MB of session
+    transcripts, though only ~0.8% are `turn_completed`. Added a substring
+    pre-filter: 2,736 ms -> 715 ms, same 657 rows parsed.
+- `collect_all` fetched accounts serially. It now overlaps them with a thread
+  pool (one sqlite connection per worker), since the work is I/O-bound.
+
 ## [0.2.1] — 2026-08-16
 
 ### Changed

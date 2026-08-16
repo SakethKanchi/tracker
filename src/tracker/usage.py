@@ -706,12 +706,35 @@ def collect_all(conn: Any, force: bool = False) -> list[AccountUsage]:
     Each account always produces a row.
     """
     accounts = store.list_accounts(conn)
-    results: list[AccountUsage] = [
-        _collect_for_account(account, conn, force=force) for account in accounts
-    ]
+
+    # Accounts are independent and the work is I/O-bound (HTTP) or file-parsing,
+    # so overlap them. Each worker opens its own sqlite connection because a
+    # connection object must not be shared across threads.
+    if len(accounts) > 1:
+        results = _collect_concurrent(accounts, force=force)
+    else:
+        results = [
+            _collect_for_account(account, conn, force=force) for account in accounts
+        ]
     order = {p: i for i, p in enumerate(_PROVIDER_ORDER)}
     results.sort(key=lambda r: (order.get(r.provider, 99), r.label))
     return results
+
+
+def _collect_concurrent(accounts: list[Any], force: bool) -> list[AccountUsage]:
+    """Collect several accounts in parallel, one sqlite connection per thread."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(account: Any) -> AccountUsage:
+        local = store.connect()
+        try:
+            return _collect_for_account(account, local, force=force)
+        finally:
+            local.close()
+
+    workers = min(len(accounts), 8)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, accounts))
 
 
 def read_cached_all(conn: Any) -> list[AccountUsage]:
