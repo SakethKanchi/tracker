@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
 
-from .usage import AccountUsage
+if TYPE_CHECKING:  # avoid importing the provider/network stack just to render
+    from .usage import AccountUsage
 
 console = Console()
 
