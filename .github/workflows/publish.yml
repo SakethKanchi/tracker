@@ -1,6 +1,6 @@
 name: Publish to PyPI
 
-# Publishes on a version tag (v0.2.1) or manual dispatch.
+# Publishes on a version tag (e.g. v0.2.2) or manual dispatch.
 #
 # Auth uses PyPI Trusted Publishing (OIDC) — no API token stored in GitHub.
 #

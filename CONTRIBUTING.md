@@ -27,6 +27,21 @@ to exercise live collectors.
 - **No secrets in the repo.** Credentials, webhook URLs, and local DBs are
   gitignored. Demo screenshots use synthetic data only
   (`scripts/generate_screenshots.py`).
+- **Guard data correctness with a test.** Anything that changes stored or
+  aggregated numbers needs a regression test. Bugs here are silent: a missing
+  UNIQUE constraint once let every sync re-insert the full transcript history,
+  which inflated reported lifetime cost by ~1,700x before anyone noticed.
+
+## Running the tests
+
+Stdlib `unittest`, no test dependencies:
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+Tests run against an isolated `XDG_DATA_HOME`, so they never touch your real
+database at `~/.local/share/tracker/tracker.db`.
 
 ## Project layout
 
@@ -100,11 +115,12 @@ pending publisher":
 2. Add a `CHANGELOG.md` entry.
 3. Commit, then tag and push:
    ```bash
-   git tag v0.2.1
-   git push origin v0.2.1
+   git tag v0.2.2          # must match pyproject version
+   git push origin v0.2.2
    ```
 4. The workflow builds, runs `twine check --strict`, installs the wheel into a
    clean venv and smoke-tests the CLI, verifies tag == version, then publishes.
+   CI additionally runs `python -m unittest discover -s tests` on 3.11-3.13.
 
 Versions on PyPI are **immutable and cannot be reused**, so let the workflow's
 checks run instead of uploading by hand.
@@ -127,9 +143,9 @@ Nothing is uploaded when this happens, so the version is **not** burned: delete
 the tag and re-push it after finishing the setup.
 
 ```bash
-git push --delete origin v0.2.1 && git tag -d v0.2.1
+git push --delete origin v0.2.2 && git tag -d v0.2.2
 # ...register the publisher, then:
-git tag v0.2.1 && git push origin v0.2.1
+git tag v0.2.2 && git push origin v0.2.2
 ```
 
 **API-token alternative.** If you prefer a token over trusted publishing, create
