@@ -20,6 +20,7 @@ refreshes (required for Grok and Codex single-use refresh tokens).
 │ tracker sync│                 │ providers/grok.py        │
 └──────┬──────┘                 │ providers/codex.py       │
        │                        │ providers/gemini.py      │
+       │                        │ providers/zai.py         │
        │                        │ providers/apikeys.py     │
        │                        └────────────┬─────────────┘
        │                                     ▼
@@ -46,6 +47,7 @@ refreshes (required for Grok and Codex single-use refresh tokens).
 | `providers/grok.py` | OIDC refresh, billing windows, session transcript parse |
 | `providers/codex.py` | ChatGPT OAuth refresh, WHAM `/wham/usage` windows |
 | `providers/gemini.py` | AI Studio API-key health check |
+| `providers/zai.py` | Z.ai / Zhipu GLM Coding Plan quota windows |
 | `providers/apikeys.py` | Prefix detection + validation for all API-key providers |
 | `tui.py` | compact rich progress-bar tree for the terminal |
 | `bot.py` | Discord webhook poller (POST once, PATCH on each cycle) |
@@ -128,6 +130,22 @@ the provider CLI, or stores a pasted API key:
 - Validate via `GET https://api.openai.com/v1/models`
 - Distinct from Codex ChatGPT-subscription windows
 
+### Z.ai / Zhipu (GLM Coding Plan)
+
+- API keys only, shaped `<32 hex id>.<secret>`; `tracker add zai` also reads
+  `$Z_AI_API_KEY` or an `$ANTHROPIC_AUTH_TOKEN` paired with a z.ai
+  `$ANTHROPIC_BASE_URL` (environment or `~/.claude/settings*.json`)
+- Live quota: `GET {base}/api/monitor/usage/quota/limit`, where base is
+  `https://api.z.ai` (global) or `https://open.bigmodel.cn` (CN). The platform
+  is stored in the credential blob; add-time validation probes both.
+- **The endpoint returns HTTP 200 for auth failures** — the body's `success`
+  flag is the real status, and codes 1000-1099 mean a dead key.
+- Windows are keyed by (`type`, `unit`): `TOKENS_LIMIT`/unit 3 is the 5-hour
+  rolling token quota, `TOKENS_LIMIT`/unit 6 the weekly one (newer plans only),
+  `TIME_LIMIT` the monthly MCP/tool-call quota. They are emitted as
+  `five_hour` / `seven_day` / `scoped` so every renderer reads them without a
+  special case.
+
 ### API key auto-detect
 
 `tracker add <key>` / `tracker --add <key>`:
@@ -137,6 +155,7 @@ the provider CLI, or stores a pasted API key:
 | `sk-ant-` | claude |
 | `xai-` | grok |
 | `AIza` | gemini |
+| `<32 hex>.<secret>` | zai |
 | `sk-` (else) | openai |
 
 Ambiguous keys are probed against each provider's cheap endpoint until one

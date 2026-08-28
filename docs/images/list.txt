@@ -35,3 +35,9 @@ OpenAI  (1)
   platform  [api · 1m ago]
   └ key  blocked  insufficient_quota
 
+Z.ai  (1)
+  glm-coding  pro  [api · 30s ago]
+  ├ 5h  ██░░░░░░░░░░░░░░░░░░  12%  resets in 2h58m
+  ├ wk  █████░░░░░░░░░░░░░░░  24%  120K/500K  resets in 3d23h
+  └ mcp ██████░░░░░░░░░░░░░░  28%  resets in 11d23h
+

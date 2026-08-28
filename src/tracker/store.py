@@ -14,7 +14,7 @@ logger = logging.getLogger("tracker")
 
 # Known providers. Schema CHECK is intentionally omitted so new providers can
 # be added without a table rebuild; validation lives in the CLI / collectors.
-KNOWN_PROVIDERS = ("claude", "grok", "codex", "gemini", "openai")
+KNOWN_PROVIDERS = ("claude", "grok", "codex", "gemini", "openai", "zai")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -215,10 +215,39 @@ def list_accounts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def get_account_by_label(conn: sqlite3.Connection, label: str) -> sqlite3.Row | None:
+def find_accounts(conn: sqlite3.Connection, selector: str) -> list[sqlite3.Row]:
+    """Resolve a CLI account selector to the active accounts it names.
+
+    A selector is a label, a provider name, or ``provider:label``. Labels are
+    not unique — two providers routinely share one email — so this returns
+    every match and lets the caller decide whether an ambiguous selector is
+    acceptable. Matching is case-insensitive but exact: no substring guessing,
+    so a selector never silently hits an account the user did not mean.
+    """
+    sel = selector.strip().lower()
+    if not sel:
+        return []
+
+    provider, sep, label = sel.partition(":")
+    if sep and label:
+        return conn.execute(
+            "SELECT * FROM accounts WHERE is_active=1"
+            " AND lower(provider)=? AND lower(label)=? ORDER BY provider, label",
+            (provider, label),
+        ).fetchall()
+
+    rows = conn.execute(
+        "SELECT * FROM accounts WHERE is_active=1 AND lower(label)=?"
+        " ORDER BY provider, label",
+        (sel,),
+    ).fetchall()
+    if rows:
+        return rows
     return conn.execute(
-        "SELECT * FROM accounts WHERE label=? AND is_active=1", (label,)
-    ).fetchone()
+        "SELECT * FROM accounts WHERE is_active=1 AND lower(provider)=?"
+        " ORDER BY provider, label",
+        (sel,),
+    ).fetchall()
 
 
 def get_account(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row | None:

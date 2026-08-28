@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Z.ai / Zhipu GLM Coding Plan support.** `tracker add zai` finds an existing
+  key (`$Z_AI_API_KEY`, or `$ANTHROPIC_AUTH_TOKEN` paired with a z.ai
+  `$ANTHROPIC_BASE_URL`, in the environment or `~/.claude/settings*.json`) and
+  otherwise prompts for one; a pasted `<32 hex>.<secret>` key is auto-detected
+  like any other. The dashboard shows the real subscription windows from
+  `GET /api/monitor/usage/quota/limit` — 5-hour token quota, weekly token quota
+  (newer plans), and the monthly MCP/tool-call quota — plus the plan tier.
+  Both platforms are supported (`api.z.ai` and `open.bigmodel.cn`); which one a
+  key belongs to is detected at add time and stored with the credential.
+- `tracker remove <selector> --all` removes every account a selector matches.
+
+### Changed
+
+- **`remove`, `sync --label`, and `log` now take a selector**, not just a label:
+  a label, a provider name (`tracker remove codex`), or `provider:label`.
+  Matching is case-insensitive and exact — a partial string is a miss, and the
+  error lists the available `provider:label` pairs.
+
+### Fixed
+
+- **`tracker remove codex` failed**, because `remove` only ever matched labels
+  and labels are provider account emails. Worse, when two providers shared one
+  email — routinely, since one account signs into several services — every
+  label lookup silently picked whichever row sorted first, so
+  `tracker remove <email>` could delete the wrong account and `tracker sync
+  --label <email>` could refresh the wrong one. Selectors now resolve to *all*
+  matches: `remove` refuses an ambiguous one instead of guessing, and `sync`
+  refreshes each. The same fix covers the initial collection after
+  `tracker add`, which now looks the new account up by id.
+
 ## [0.2.2] — 2026-08-16
 
 ### Fixed

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import time
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -23,6 +24,11 @@ from tracker.usage import AccountUsage  # noqa: E402
 
 OUT = ROOT / "docs" / "images"
 NOW = time.time()
+
+
+def _iso(ts: float) -> str:
+    """UTC ISO timestamp — the format the renderers count down from."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
 def demo_accounts() -> list[AccountUsage]:
@@ -189,6 +195,41 @@ def demo_accounts() -> list[AccountUsage]:
             },
             source="api",
             fetched_at=NOW - 75,
+            error=None,
+            needs_relogin=False,
+        ),
+        AccountUsage(
+            account_id="demo-zai-1",
+            provider="zai",
+            label="glm-coding",
+            email=None,
+            tier="pro",
+            windows={
+                "quota_status": "active",
+                "platform": "zai",
+                "plan": "pro",
+                "five_hour": {
+                    "pct": 12.0,
+                    "resets_at": _iso(NOW + 3 * 3600 - 60),
+                },
+                "seven_day": {
+                    "pct": 24.0,
+                    "used": 120000,
+                    "limit": 500000,
+                    "resets_at": _iso(NOW + 4 * 86400 - 60),
+                },
+                "scoped": [
+                    {
+                        "name": "mcp",
+                        "pct": 28.0,
+                        "used": 28,
+                        "limit": 100,
+                        "resets_at": _iso(NOW + 12 * 86400 - 60),
+                    },
+                ],
+            },
+            source="api",
+            fetched_at=NOW - 30,
             error=None,
             needs_relogin=False,
         ),

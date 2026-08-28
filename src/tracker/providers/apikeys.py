@@ -29,6 +29,9 @@ _PREFIX_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^sk-ant-", re.I), "claude"),
     (re.compile(r"^xai-", re.I), "grok"),
     (re.compile(r"^AIza", re.I), "gemini"),
+    # Z.ai / Zhipu GLM keys are `<32 hex id>.<secret>` — no prefix, but the
+    # shape is unmistakable and nothing else here contains a dot.
+    (re.compile(r"^[0-9a-f]{32}\.[A-Za-z0-9]{8,}$", re.I), "zai"),
     # OpenAI project keys sk-proj-… and classic sk-…
     (re.compile(r"^sk-", re.I), "openai"),
 ]
@@ -47,7 +50,10 @@ def looks_like_api_key(value: str) -> bool:
     v = value.strip()
     if not v or " " in v or len(v) < 16:
         return False
-    if v.lower() in ("claude", "grok", "codex", "gemini", "openai", "chatgpt"):
+    if v.lower() in (
+        "claude", "grok", "codex", "gemini", "openai", "chatgpt",
+        "zai", "z.ai", "glm", "zhipu",
+    ):
         return False
     for pat, _ in _PREFIX_RULES:
         if pat.search(v):
@@ -110,6 +116,8 @@ def _validate(
         return _validate_gemini(api_key, timeout)
     if provider == "openai":
         return _validate_openai(api_key, timeout)
+    if provider == "zai":
+        return _validate_zai(api_key, timeout)
     return False, f"unknown provider {provider}", None, None
 
 
@@ -240,6 +248,34 @@ def _validate_openai(
         return False, f"http-{e.code}", None, None
     except Exception as e:
         return False, str(e), None, None
+
+
+def _validate_zai(
+    api_key: str, timeout: float
+) -> tuple[bool, str | None, dict | None, dict | None]:
+    """Validate a GLM Coding Plan key against both Z.ai platforms.
+
+    A key belongs to exactly one platform (global or CN) and the other rejects
+    it as invalid, so an auth failure on the default host is retried on the
+    other before giving up. The winning platform is reported back so the
+    credential remembers where the key lives.
+    """
+    from . import zai
+
+    last_err: str | None = None
+    for platform in (zai.DEFAULT_PLATFORM, "zhipu"):
+        result = zai.fetch_usage(api_key, platform=platform, timeout=timeout)
+        if result.usage:
+            identity = {
+                "fingerprint": fingerprint(api_key),
+                "platform": platform,
+                "tier": result.usage.get("plan"),
+            }
+            return True, None, identity, result.usage
+        last_err = result.error
+        if last_err and "invalid" not in last_err:
+            break  # network / server-side problem: the other host won't help
+    return False, last_err or "validation failed", None, None
 
 
 def make_api_key_blob(provider: str, api_key: str) -> dict[str, Any]:

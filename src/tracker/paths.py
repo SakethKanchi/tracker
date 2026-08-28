@@ -42,3 +42,10 @@ CLAUDE_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 GROK_AUTH_PATH = Path.home() / ".grok" / "auth.json"
 GROK_SESSIONS_DIR = Path.home() / ".grok" / "sessions"
 CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
+
+# Claude Code settings files — where a z.ai Coding Plan key is usually wired in
+# as env.ANTHROPIC_AUTH_TOKEN + env.ANTHROPIC_BASE_URL.
+CLAUDE_SETTINGS_PATHS = (
+    Path.home() / ".claude" / "settings.json",
+    Path.home() / ".claude" / "settings.local.json",
+)

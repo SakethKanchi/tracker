@@ -7,6 +7,8 @@ Claude source: ~/.claude/.credentials.json → claudeAiOauth{accessToken,refresh
 Grok source:   ~/.grok/auth.json → {access_token,refresh_token,expires_at,email,user_id,tier,...}
 Codex source:  ~/.codex/auth.json → {auth_mode, tokens:{access_token,refresh_token,...}, ...}
 API keys:      {auth_type: "api_key", provider, api_key}
+Z.ai source:   $Z_AI_API_KEY, or $ANTHROPIC_AUTH_TOKEN + a z.ai/bigmodel base URL
+               (env or ~/.claude/settings*.json), since z.ai ships no CLI of its own
 """
 
 from __future__ import annotations
@@ -260,3 +262,81 @@ def write_back_codex_auth(blob: dict[str, Any], source_path: str | None = None) 
 
     _atomic_write_json(path, merged)
     return True
+
+
+# ── Z.ai / GLM Coding Plan ──
+
+# Env vars the z.ai ecosystem uses for a Coding Plan key, most specific first.
+_ZAI_KEY_ENVS = (
+    "Z_AI_API_KEY",
+    "ZAI_API_KEY",
+    "ZHIPUAI_API_KEY",
+    "ZHIPU_API_KEY",
+    "GLM_API_KEY",
+)
+
+
+def import_zai_credential() -> dict[str, Any] | None:
+    """Find a GLM Coding Plan key in the environment or Claude Code settings.
+
+    Z.ai has no CLI that stores credentials of its own: a Coding Plan key is
+    wired into other agents as ``ANTHROPIC_AUTH_TOKEN`` plus a z.ai
+    ``ANTHROPIC_BASE_URL``, so that pair is the closest thing to a live
+    credential. A bare ``ANTHROPIC_AUTH_TOKEN`` is only trusted when the base
+    URL confirms it points at z.ai — otherwise it is somebody else's token.
+
+    Returns ``{api_key, platform, source}`` or None.
+    """
+    from .providers import zai
+
+    env_platform = zai.platform_for_base_url(os.environ.get("ANTHROPIC_BASE_URL"))
+    for name in _ZAI_KEY_ENVS:
+        key = (os.environ.get(name) or "").strip()
+        if key:
+            return {
+                "api_key": key,
+                "platform": env_platform or zai.DEFAULT_PLATFORM,
+                "source": f"${name}",
+            }
+
+    token = (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
+    if token and env_platform:
+        return {
+            "api_key": token,
+            "platform": env_platform,
+            "source": "$ANTHROPIC_AUTH_TOKEN",
+        }
+
+    for path in paths.CLAUDE_SETTINGS_PATHS:
+        found = _zai_from_claude_settings(str(path))
+        if found:
+            return found
+    return None
+
+
+def _zai_from_claude_settings(path: str) -> dict[str, Any] | None:
+    """Pull a z.ai key out of a Claude Code settings file's ``env`` block."""
+    from .providers import zai
+
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    env = data.get("env") if isinstance(data, dict) else None
+    if not isinstance(env, dict):
+        return None
+
+    platform = zai.platform_for_base_url(env.get("ANTHROPIC_BASE_URL"))
+    for name in _ZAI_KEY_ENVS:
+        key = str(env.get(name) or "").strip()
+        if key:
+            return {
+                "api_key": key,
+                "platform": platform or zai.DEFAULT_PLATFORM,
+                "source": path,
+            }
+    token = str(env.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
+    if token and platform:
+        return {"api_key": token, "platform": platform, "source": path}
+    return None

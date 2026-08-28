@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import credentials, store
-from .providers import apikeys, claude, codex, gemini, grok
+from .providers import apikeys, claude, codex, gemini, grok, zai
 
 logger = logging.getLogger("tracker")
 
@@ -392,7 +392,7 @@ def _collect_grok(account: Any, conn: Any, force: bool = False) -> AccountUsage:
     )
 
 
-_PROVIDER_ORDER = ("claude", "grok", "codex", "gemini", "openai")
+_PROVIDER_ORDER = ("claude", "grok", "codex", "gemini", "openai", "zai")
 
 
 def _collect_for_account(
@@ -410,7 +410,7 @@ def _collect_for_account(
         return _collect_grok(account, conn, force=force)
     if provider == "codex":
         return _collect_codex(account, conn, force=force)
-    if provider in ("gemini", "openai"):
+    if provider in ("gemini", "openai", "zai"):
         # These only support API-key mode; missing blob already handled above.
         return _no_data(account, "credential missing — re-add with tracker add <api_key>")
     return AccountUsage(
@@ -423,7 +423,7 @@ def _collect_for_account(
 def _collect_api_key(
     account: Any, conn: Any, cred_blob: dict[str, Any], force: bool = False
 ) -> AccountUsage:
-    """Health-check an API-key account (claude/grok/gemini/openai)."""
+    """Health-check an API-key account (claude/grok/gemini/openai/zai)."""
     acct_id = account["id"]
     provider = account["provider"]
     api_key = apikeys.api_key_of(cred_blob)
@@ -442,6 +442,13 @@ def _collect_api_key(
 
     if provider == "gemini":
         result = gemini.fetch_usage(api_key)
+        windows, err = result.usage, result.error
+        retry_after = result.retry_after
+    elif provider == "zai":
+        # The quota endpoint is both the health check and the usage source.
+        result = zai.fetch_usage(
+            api_key, platform=cred_blob.get("platform") or zai.DEFAULT_PLATFORM
+        )
         windows, err = result.usage, result.error
         retry_after = result.retry_after
     else:
@@ -766,12 +773,14 @@ def read_cached_all(conn: Any) -> list[AccountUsage]:
     return results
 
 
-def collect_one(conn: Any, label: str, force: bool = True) -> AccountUsage | None:
-    """Force-collect a single account by label. Used by `tracker sync <label>`."""
-    account = store.get_account_by_label(conn, label)
-    if not account:
-        return None
-    return _collect_for_account(account, conn, force=True)
+def collect_account(conn: Any, account: Any, force: bool = True) -> AccountUsage:
+    """Collect usage for one already-resolved account row.
+
+    Callers resolve the row themselves (``store.find_accounts``) because labels
+    are not unique across providers — looking an account up by label here would
+    silently collect the wrong one.
+    """
+    return _collect_for_account(account, conn, force=force)
 
 
 def _serve_cached(

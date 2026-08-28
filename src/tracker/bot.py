@@ -83,7 +83,27 @@ def _render_account_block(au: usage.AccountUsage) -> tuple[str, str]:
         lines.append("  no data")
     else:
         w = au.windows
-        if w.get("auth_type") == "api_key" or au.provider in ("gemini", "openai"):
+        if au.provider == "zai":
+            # API-key credential, but real subscription windows behind it.
+            for label, key in (("5h", "five_hour"), ("wk", "seven_day")):
+                win = w.get(key)
+                if not isinstance(win, dict):
+                    continue
+                line = f"  {label:<5} {_plain_bar(win.get('pct'))}"
+                suffix = _reset_str(win.get("resets_at"))
+                if suffix:
+                    line += f"  {suffix}"
+                lines.append(line)
+            for s in w.get("scoped") or []:
+                name = str(s.get("name") or "extra")[:5]
+                line = f"  {name:<5} {_plain_bar(s.get('pct'))}"
+                suffix = _reset_str(s.get("resets_at"))
+                if suffix:
+                    line += f"  {suffix}"
+                lines.append(line)
+            if w.get("quota_status") == "blocked":
+                lines.append(f"  lim   {w.get('quota_reason') or 'quota exhausted'}")
+        elif w.get("auth_type") == "api_key" or au.provider in ("gemini", "openai"):
             quota = w.get("quota_status")
             if quota == "active":
                 lines.append("  key   valid")
@@ -202,7 +222,7 @@ def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
             worst = "red"
             continue
         w = au.windows or {}
-        if au.provider == "claude":
+        if au.provider in ("claude", "zai"):
             for key in ("five_hour", "seven_day"):
                 win = w.get(key) or {}
                 pct = win.get("pct")
@@ -249,10 +269,10 @@ def _build_text(results: list[usage.AccountUsage]) -> tuple[str, int]:
 
     labels = {
         "claude": "Claude", "grok": "Grok", "codex": "Codex",
-        "gemini": "Gemini", "openai": "OpenAI",
+        "gemini": "Gemini", "openai": "OpenAI", "zai": "Z.ai",
     }
     out: list[str] = []
-    for provider in ("claude", "grok", "codex", "gemini", "openai"):
+    for provider in ("claude", "grok", "codex", "gemini", "openai", "zai"):
         accts = by_provider.get(provider)
         if not accts:
             continue

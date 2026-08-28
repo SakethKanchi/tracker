@@ -1,4 +1,4 @@
-"""tracker CLI — unified usage tracker for Claude, Grok, Codex, Gemini, OpenAI.
+"""tracker CLI — unified usage tracker for Claude, Grok, Codex, Gemini, OpenAI, Z.ai.
 
 Usage:
   tracker                         # show all accounts' usage (primary command)
@@ -6,16 +6,21 @@ Usage:
   tracker add <api_key>           # auto-detect provider from key prefix and add
   tracker --add <api_key>         # same as above (flag form)
   tracker list [--refresh]        # show all accounts (force-refresh with --refresh)
-  tracker sync [--all|LABEL]      # force-refresh usage
+  tracker sync [--label SEL]      # force-refresh usage
   tracker tokens [--since]        # historical token/cost report
   tracker status                  # one-line aggregate
-  tracker remove <label>          # drop an account
+  tracker remove <provider|label> # drop an account
   tracker log <provider> <label> --msgs N --resets-in HhMm  # manual entry
+
+Commands that name an account take a *selector*: a label, a provider name, or
+`provider:label`. Labels are not unique (one email often has both a Grok and a
+Codex account), so an ambiguous selector is reported instead of guessed.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import re
 import sys
 import time
@@ -24,7 +29,7 @@ import uuid
 from . import credentials, store, tui, usage
 from .providers import apikeys, claude, codex, grok
 
-CLI_PROVIDERS = ("claude", "grok", "codex")
+CLI_PROVIDERS = ("claude", "grok", "codex", "zai")
 ALL_PROVIDERS = store.KNOWN_PROVIDERS
 
 
@@ -59,7 +64,7 @@ def _add_or_update_account(
     default_label: str,
     update_msg: str | None = None,
 ) -> str:
-    """Insert or update an account; returns the label used."""
+    """Insert or update an account; returns the account id."""
     existing = None
     if provider_account_id:
         existing = store.find_by_provider_account_id(conn, provider, provider_account_id)
@@ -79,9 +84,8 @@ def _add_or_update_account(
                WHERE id=?""",
             (email, org_id, tier, existing["id"]),
         )
-        label = existing["label"]
-        print(update_msg or f"  updated {provider} credentials: {label}")
-        return label
+        print(update_msg or f"  updated {provider} credentials: {existing['label']}")
+        return existing["id"]
 
     label = _prompt_label(default_label)
     account_id = str(uuid.uuid4())
@@ -97,7 +101,7 @@ def _add_or_update_account(
         tier=tier,
     )
     print(f"  added {provider} account: {label}" + (f" ({email})" if email else ""))
-    return label
+    return account_id
 
 
 def _add_claude(conn) -> int:
@@ -136,7 +140,7 @@ def _add_claude(conn) -> int:
     acct_uuid = identity.get("uuid") if identity else str(uuid.uuid4())
     org_id = identity.get("organizationUuid") if identity else None
 
-    label = _add_or_update_account(
+    account_id = _add_or_update_account(
         conn,
         provider="claude",
         blob=oauth,
@@ -146,7 +150,7 @@ def _add_claude(conn) -> int:
         tier=None,
         default_label=email or (acct_uuid[:8] if acct_uuid else "claude-account"),
     )
-    return _collect_initial(conn, label)
+    return _collect_initial(conn, account_id)
 
 
 def _add_grok(conn) -> int:
@@ -173,7 +177,7 @@ def _add_grok(conn) -> int:
     team_id = identity.get("team_id")
     tier = identity.get("tier")
 
-    label = _add_or_update_account(
+    account_id = _add_or_update_account(
         conn,
         provider="grok",
         blob=blob,
@@ -183,7 +187,7 @@ def _add_grok(conn) -> int:
         tier=tier,
         default_label=email or (user_id[:8] if user_id else "grok-account"),
     )
-    return _collect_initial(conn, label)
+    return _collect_initial(conn, account_id)
 
 
 def _add_codex(conn) -> int:
@@ -217,7 +221,7 @@ def _add_codex(conn) -> int:
     # Prefer account_id for dedup (workspace), fall back to user_id
     provider_account_id = account_id or user_id
 
-    label = _add_or_update_account(
+    account_id = _add_or_update_account(
         conn,
         provider="codex",
         blob=blob,
@@ -227,20 +231,46 @@ def _add_codex(conn) -> int:
         tier=tier,
         default_label=email or (provider_account_id[:8] if provider_account_id else "codex-account"),
     )
-    return _collect_initial(conn, label)
+    return _collect_initial(conn, account_id)
 
 
-def _add_api_key(conn, api_key: str) -> int:
+def _add_zai(conn) -> int:
+    """Add a Z.ai / Zhipu GLM Coding Plan subscription."""
+    found = credentials.import_zai_credential()
+    if found:
+        print(f"  found GLM Coding Plan key in {found['source']}")
+        return _add_api_key(conn, found["api_key"], platform=found["platform"])
+
+    print("  no z.ai key in the environment or ~/.claude/settings.json")
+    key = ""
+    # getpass without a terminal warns and echoes the secret — don't ask.
+    if sys.stdin.isatty():
+        try:
+            key = getpass.getpass("  paste your z.ai API key (hidden): ").strip()
+        except (EOFError, KeyboardInterrupt, getpass.GetPassWarning):
+            print()
+            key = ""
+    if not key:
+        print("error: no z.ai key provided")
+        print("  create one at https://z.ai/manage-apikey/apikey-list, then either")
+        print("    export Z_AI_API_KEY=...  &&  tracker add zai")
+        print("    tracker add <key>")
+        return 1
+    return _add_api_key(conn, key)
+
+
+def _add_api_key(conn, api_key: str, platform: str | None = None) -> int:
     """Auto-detect provider from API key format, validate, and store."""
     print("  detecting provider from API key...")
     result = apikeys.detect_and_validate(api_key)
     if not result.provider:
         print(f"error: could not detect provider: {result.error or 'unknown'}")
         print("  supported prefixes:")
-        print("    sk-ant-...  → Claude (Anthropic)")
-        print("    xai-...     → Grok (xAI)")
-        print("    AIza...     → Gemini (Google AI Studio)")
-        print("    sk-...      → OpenAI (platform API key)")
+        print("    sk-ant-...        → Claude (Anthropic)")
+        print("    xai-...           → Grok (xAI)")
+        print("    AIza...           → Gemini (Google AI Studio)")
+        print("    sk-...            → OpenAI (platform API key)")
+        print("    <32hex>.<secret>  → Z.ai / Zhipu (GLM Coding Plan)")
         return 1
 
     provider = result.provider
@@ -251,42 +281,42 @@ def _add_api_key(conn, api_key: str) -> int:
     print(f"  detected: {provider}")
     fp = apikeys.fingerprint(api_key)
     blob = apikeys.make_api_key_blob(provider, api_key)
+    identity = result.identity or {}
+    if provider == "zai":
+        # Remember which host the key authenticated against so refreshes and
+        # CN-platform keys never hit the wrong endpoint.
+        blob["platform"] = identity.get("platform") or platform or "zai"
 
-    # Dedup by fingerprint as provider_account_id
-    provider_account_id = f"apikey:{fp}"
-    email = None
-    if result.identity:
-        email = result.identity.get("email")
-
-    label = _add_or_update_account(
+    account_id = _add_or_update_account(
         conn,
         provider=provider,
         blob=blob,
-        provider_account_id=provider_account_id,
-        email=email,
+        # Dedup by fingerprint — API keys carry no account identity.
+        provider_account_id=f"apikey:{fp}",
+        email=identity.get("email"),
         org_id=None,
-        tier="api_key",
+        tier=identity.get("tier") or "api_key",
         default_label=f"{provider}-{fp[-4:]}",
     )
 
     # Store the initial health sample if we already have windows
     if result.windows:
-        account = store.get_account_by_label(conn, label)
-        if account:
-            store.insert_usage_sample(
-                conn, account_id=account["id"], source="api", windows=result.windows
-            )
-            print(f"  key valid ({result.windows.get('quota_status', 'ok')})")
-    else:
-        return _collect_initial(conn, label)
-    return 0
+        store.insert_usage_sample(
+            conn, account_id=account_id, source="api", windows=result.windows
+        )
+        print(f"  key valid ({result.windows.get('quota_status', 'ok')})")
+        return 0
+    return _collect_initial(conn, account_id)
 
 
-def _collect_initial(conn, label: str) -> int:
-    au = usage.collect_one(conn, label, force=True)
-    if au and au.windows:
+def _collect_initial(conn, account_id: str) -> int:
+    account = store.get_account(conn, account_id)
+    if not account:
+        return 0
+    au = usage.collect_account(conn, account, force=True)
+    if au.windows:
         print(f"  collected initial usage ({au.source})")
-    elif au and au.error:
+    elif au.error:
         print(f"  warning: initial collect: {au.error}")
     return 0
 
@@ -295,7 +325,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     target = (args.target or "").strip()
     if not target:
         print("error: provide a provider name or API key")
-        print("  tracker add claude|grok|codex")
+        print(f"  tracker add {'|'.join(CLI_PROVIDERS)}")
         print("  tracker add <api_key>")
         return 1
 
@@ -309,6 +339,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     # Aliases
     if provider in ("chatgpt", "openai-codex"):
         provider = "codex"
+    if provider in ("z.ai", "z-ai", "glm", "zhipu", "bigmodel"):
+        provider = "zai"
     if provider == "openai":
         print("error: 'openai' has no CLI import — paste an API key: tracker add sk-...")
         return 1
@@ -322,10 +354,12 @@ def cmd_add(args: argparse.Namespace) -> int:
         return _add_grok(conn)
     if provider == "codex":
         return _add_codex(conn)
+    if provider == "zai":
+        return _add_zai(conn)
 
     print(f"error: unknown provider '{target}'")
     print(f"  CLI import: {', '.join(CLI_PROVIDERS)}")
-    print("  or paste an API key (auto-detects claude/grok/gemini/openai)")
+    print("  or paste an API key (auto-detects claude/grok/gemini/openai/zai)")
     return 1
 
 
@@ -377,15 +411,36 @@ def _watch_loop(conn, interval: int, force_first: bool = False) -> int:
         return 0
 
 
+def _describe(account) -> str:
+    """`provider:label` — the selector that unambiguously names this account."""
+    return f"{account['provider']}:{account['label']}"
+
+
+def _resolve_accounts(conn, selector: str) -> list:
+    """Accounts named by *selector*, or [] after printing what went wrong."""
+    matches = store.find_accounts(conn, selector)
+    if matches:
+        return matches
+    print(f"  error: no account matches '{selector}'")
+    known = store.list_accounts(conn)
+    if not known:
+        print(f"  no accounts yet — run: tracker add {'|'.join(CLI_PROVIDERS)}")
+        return []
+    print("  known accounts (use a provider, a label, or provider:label):")
+    for row in known:
+        print(f"    {_describe(row)}")
+    return []
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
     conn = store.connect()
     if args.label:
-        au = usage.collect_one(conn, args.label, force=True)
-        if au:
-            print(f"  synced {au.label}: {au.source}")
-        else:
-            print(f"  error: no account with label '{args.label}'")
+        matches = _resolve_accounts(conn, args.label)
+        if not matches:
             return 1
+        for account in matches:
+            au = usage.collect_account(conn, account, force=True)
+            print(f"  synced {_describe(account)}: {au.error or au.source}")
     else:
         results = usage.collect_all(conn, force=True)
         for au in results:
@@ -430,25 +485,33 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_remove(args: argparse.Namespace) -> int:
     conn = store.connect()
-    account = store.get_account_by_label(conn, args.label)
-    if not account:
-        print(f"  error: no account with label '{args.label}'")
+    matches = _resolve_accounts(conn, args.selector)
+    if not matches:
         return 1
-    credentials.delete_credential(account["id"])
-    store.remove_account(conn, account["id"])
-    print(f"  removed {account['provider']} account: {args.label}")
+    if len(matches) > 1 and not args.all:
+        print(f"  error: '{args.selector}' matches {len(matches)} accounts:")
+        for row in matches:
+            print(f"    {_describe(row)}")
+        print("  name one of those, or pass --all to remove every match")
+        return 1
+
+    for account in matches:
+        credentials.delete_credential(account["id"])
+        store.remove_account(conn, account["id"])
+        print(f"  removed {account['provider']} account: {account['label']}")
     return 0
 
 
 def cmd_log(args: argparse.Namespace) -> int:
     conn = store.connect()
-    account = store.get_account_by_label(conn, args.label)
-    if not account:
-        print(f"  error: no account with label '{args.label}'")
+    matches = store.find_accounts(conn, f"{args.provider}:{args.label}")
+    if not matches:
+        print(f"  error: no {args.provider} account with label '{args.label}'")
         return 1
-    if account["provider"] != args.provider:
-        print(f"  error: account '{args.label}' is a {account['provider']} account, not {args.provider}")
+    if len(matches) > 1:
+        print(f"  error: {len(matches)} {args.provider} accounts share that label")
         return 1
+    account = matches[0]
 
     windows: dict = {"source": "manual"}
     if args.msgs is not None:
@@ -463,7 +526,7 @@ def cmd_log(args: argparse.Namespace) -> int:
         windows["manual_tokens"] = args.tokens
 
     store.insert_usage_sample(conn, account_id=account["id"], source="manual", windows=windows)
-    print(f"  logged manual usage for {args.label}")
+    print(f"  logged manual usage for {_describe(account)}")
     return 0
 
 
@@ -478,7 +541,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="tracker",
-        description="Unified usage tracker for Claude, Grok, Codex, Gemini, and OpenAI",
+        description="Unified usage tracker for Claude, Grok, Codex, Gemini, OpenAI, and Z.ai",
     )
     parser.add_argument(
         "-V", "--version", action="version", version=f"tracker {__version__}",
@@ -494,11 +557,11 @@ def build_parser() -> argparse.ArgumentParser:
     # add
     p_add = sub.add_parser(
         "add",
-        help="import a CLI credential (claude|grok|codex) or paste an API key",
+        help=f"import a CLI credential ({'|'.join(CLI_PROVIDERS)}) or paste an API key",
     )
     p_add.add_argument(
         "target",
-        help="provider name (claude|grok|codex) or an API key (auto-detected)",
+        help=f"provider name ({'|'.join(CLI_PROVIDERS)}) or an API key (auto-detected)",
     )
 
     # list (primary)
@@ -516,7 +579,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # sync
     p_sync = sub.add_parser("sync", help="force-refresh usage")
-    p_sync.add_argument("--label", help="sync a single account by label")
+    p_sync.add_argument(
+        "--label",
+        metavar="SELECTOR",
+        help="sync one account: a label, a provider name, or provider:label",
+    )
     p_sync.add_argument("--all", action="store_true", help="sync all accounts (default)")
 
     # tokens
@@ -533,7 +600,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     # remove
     p_remove = sub.add_parser("remove", help="drop an account")
-    p_remove.add_argument("label")
+    p_remove.add_argument(
+        "selector",
+        metavar="PROVIDER|LABEL",
+        help="account to drop: a label, a provider name, or provider:label",
+    )
+    p_remove.add_argument(
+        "--all",
+        action="store_true",
+        help="remove every account the selector matches",
+    )
 
     # log
     p_log = sub.add_parser("log", help="manual usage entry")

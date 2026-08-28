@@ -1,6 +1,6 @@
 # tracker
 
-**Unified local usage tracker for Claude, Grok, Codex, Gemini, and OpenAI.**
+**Unified local usage tracker for Claude, Grok, Codex, Gemini, OpenAI, and Z.ai.**
 
 See every subscription's quota in one terminal command — no more logging into
 each account, checking usage, and logging out.
@@ -22,7 +22,7 @@ the question in one command.
 - `tracker` / `tracker list` — dashboard for **all** accounts at once
 - Refresh-if-stale collection (cached when fresh, network when not)
 - Honors usage-endpoint 429 backoff so you keep last-known bars
-- Auto-detects API keys by prefix (`sk-ant-`, `xai-`, `AIza`, `sk-`)
+- Auto-detects API keys by shape (`sk-ant-`, `xai-`, `AIza`, `sk-`, GLM `id.secret`)
 - Optional Discord webhook that posts and **edits** one live message
 - `tracker status` names the account with the most quota left, so you don't
   have to eyeball five sets of bars
@@ -73,13 +73,19 @@ Gemini  (1)
 OpenAI  (1)
   platform  [api · 1m ago]
   └ key  blocked  insufficient_quota
+
+Z.ai  (1)
+  glm-coding  pro  [api · 30s ago]
+  ├ 5h  ██░░░░░░░░░░░░░░░░░░  12%  resets in 2h58m
+  ├ wk  █████░░░░░░░░░░░░░░░  24%  120K/500K  resets in 3d23h
+  └ mcp ██████░░░░░░░░░░░░░░  28%  resets in 11d23h
 ```
 
 `tracker status` compresses the same data to one line, and names the account
 with the most headroom left:
 
 ```
-2 Claude · 2 Grok · 1 Codex · 1 Gemini · 1 OpenAI · max 7d: 88% · 1 Grok blocked
+2 Claude · 2 Grok · 1 Codex · 1 Gemini · 1 OpenAI · 1 Z.ai · max 7d: 88% · 1 Grok blocked
   best: Grok main  95% free
 ```
 
@@ -128,7 +134,7 @@ pip install -e .
   [Grok](https://grok.x.ai/),
   [Codex](https://github.com/openai/codex))
 - For API-key accounts: a valid key from Anthropic / xAI / Google AI Studio /
-  OpenAI platform
+  OpenAI platform / Z.ai (GLM Coding Plan)
 
 ## Quick start
 
@@ -142,6 +148,12 @@ tracker add sk-ant-api03-...     # Claude
 tracker add xai-...              # Grok
 tracker add AIza...              # Gemini
 tracker add sk-proj-...          # OpenAI platform
+tracker add 0f8c….AbCd…          # Z.ai / Zhipu GLM Coding Plan
+
+# Or let tracker find an already-wired GLM Coding Plan key
+# ($Z_AI_API_KEY, or $ANTHROPIC_AUTH_TOKEN + a z.ai base URL, or
+#  the env block of ~/.claude/settings.json):
+tracker add zai
 # same thing via flag form:
 tracker --add "AIzaSy..."
 
@@ -158,12 +170,12 @@ tracker status         # one-line aggregate
 | `tracker` / `tracker list` | Primary dashboard — all accounts, refresh-if-stale |
 | `tracker list --refresh` | Force-refresh every account, then show |
 | `tracker list --watch [N]` | Live dashboard, redraws every N seconds (default 5) |
-| `tracker add claude\|grok\|codex` | Import live OAuth credential from CLI config |
+| `tracker add claude\|grok\|codex\|zai` | Import a live credential from the CLI/agent config |
 | `tracker add <api_key>` / `tracker --add <api_key>` | Auto-detect provider from key and add |
-| `tracker sync` / `tracker sync --label NAME` | Force-refresh (all or one label) |
+| `tracker sync` / `tracker sync --label SELECTOR` | Force-refresh (all, or everything a selector names) |
 | `tracker tokens [--since 7d] [--provider …]` | Historical token report |
 | `tracker status` | Compact aggregate line |
-| `tracker remove LABEL` | Drop account + credential file |
+| `tracker remove <PROVIDER\|LABEL>` | Drop account + credential file |
 | `tracker log PROVIDER LABEL --msgs N --resets-in 1h30m` | Manual usage sample |
 | `tracker webhook` / `tracker webhook --once` | Discord channel dashboard |
 | `tracker -V` | Version |
@@ -177,6 +189,23 @@ tracker status         # one-line aggregate
 | **Codex** | `tracker add codex` (ChatGPT login) | Primary + secondary rate-limit windows via WHAM |
 | **Gemini** | `tracker add AIza…` | Key health + model list (no public % usage window) |
 | **OpenAI** | `tracker add sk-…` | Key health (platform billing is separate from Codex) |
+| **Z.ai** | `tracker add zai` or a `id.secret` key | GLM Coding Plan 5h + weekly token windows, monthly MCP quota |
+
+### Naming an account
+
+`remove`, `sync --label`, and `log` take a **selector**: a label, a provider
+name, or `provider:label`.
+
+```bash
+tracker remove codex                    # by provider
+tracker remove you@example.com          # by label
+tracker remove codex:you@example.com    # when one email has two accounts
+tracker remove you@example.com --all    # every account with that label
+```
+
+Labels are not unique — one email commonly has both a Grok and a Codex
+account — so an ambiguous selector is reported with the exact alternatives
+instead of silently picking one.
 
 ### Codex auth notes
 
@@ -245,6 +274,9 @@ accounts (that can come later on top of the same store).
 | Codex says `refresh_token_reused` | `~/.codex/auth.json` was copied between machines and both sides refresh | Re-run the Codex ChatGPT login on one machine only, then re-add |
 | A row shows `backing-off` | The provider returned HTTP 429; tracker is respecting the window | Wait it out; the bars shown are last-known, not stale-forever |
 | Gemini/OpenAI show only `key valid` | Those platforms expose no public per-key usage percentage | Expected — key health and model access is all that's available |
+| `no account matches 'X'` | `remove`/`sync`/`log` take a label, a provider, or `provider:label` — never a partial string | Pick one of the `provider:label` lines it prints |
+| `'X' matches 2 accounts` | Two providers share that label (same email) | Use `provider:label`, or `--all` to remove both |
+| Z.ai row says `invalid z.ai API key` | The GLM Coding Plan key was rotated, or it belongs to the other platform (`api.z.ai` vs `open.bigmodel.cn`) | `tracker add zai` again with the current key |
 | `tracker: command not found` | Installed into a venv that is not on `PATH` | `uv tool install .`, or use `PYTHONPATH=src python -m tracker.cli` |
 | Bars look wrong after an upgrade | Old samples in SQLite | `tracker sync` to force a fresh network pass |
 

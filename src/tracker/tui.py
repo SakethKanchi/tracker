@@ -303,6 +303,45 @@ def _format_windows_codex(au: AccountUsage) -> list[Text]:
     return _format_tree_lines(lines) if lines else [Text("  no windows", style="dim")]
 
 
+def _format_windows_zai(au: AccountUsage) -> list[Text]:
+    """Z.ai / Zhipu GLM Coding Plan windows: 5h tokens, weekly tokens, MCP calls."""
+    if au.error and not au.windows:
+        return [Text(f"  {au.error}", style="red")]
+    if not au.windows:
+        return [Text("  no data", style="dim")]
+
+    w = au.windows
+    lines: list[tuple[str, Text]] = []
+
+    for label, key in (("5h", "five_hour"), ("wk", "seven_day")):
+        win = w.get(key)
+        if not isinstance(win, dict):
+            continue
+        bar = _bar(win.get("pct"))
+        used, limit = win.get("used"), win.get("limit")
+        if isinstance(used, int) and isinstance(limit, int) and limit > 0:
+            bar.append(f"  {_fmt_tok(used)}/{_fmt_tok(limit)}", style="dim")
+        suffix = _reset_str(win.get("resets_at"))
+        if suffix:
+            bar.append(f"  {suffix}", style="dim")
+        lines.append((label, bar))
+
+    for s in w.get("scoped") or []:
+        bar = _bar(s.get("pct"))
+        suffix = _reset_str(s.get("resets_at"))
+        if suffix:
+            bar.append(f"  {suffix}", style="dim")
+        lines.append((str(s.get("name") or "extra")[:6], bar))
+
+    if w.get("quota_status") == "blocked":
+        reason = w.get("quota_reason") or "quota exhausted"
+        lines.append(("lim", Text(f" {reason}", style="bold red")))
+    if au.error:
+        lines.append(("err", Text(f" {au.error}", style="red")))
+
+    return _format_tree_lines(lines) if lines else [Text("  no windows", style="dim")]
+
+
 def _format_windows_apikey(au: AccountUsage) -> list[Text]:
     """Generic formatter for API-key accounts (gemini/openai/claude-key/grok-key)."""
     if au.error and not au.windows:
@@ -409,10 +448,15 @@ _PROVIDER_LABELS = {
     "codex": "Codex",
     "gemini": "Gemini",
     "openai": "OpenAI",
+    "zai": "Z.ai",
 }
 
 
 def _format_windows_for(au: AccountUsage) -> list[Text]:
+    # Z.ai is checked first: its credential is an API key, but the quota
+    # endpoint returns real subscription windows, not just key health.
+    if au.provider == "zai":
+        return _format_windows_zai(au)
     if au.windows and au.windows.get("auth_type") == "api_key":
         return _format_windows_apikey(au)
     if au.provider == "claude":
@@ -421,8 +465,6 @@ def _format_windows_for(au: AccountUsage) -> list[Text]:
         return _format_windows_grok(au)
     if au.provider == "codex":
         return _format_windows_codex(au)
-    if au.provider in ("gemini", "openai"):
-        return _format_windows_apikey(au)
     return _format_windows_apikey(au)
 
 
@@ -435,7 +477,7 @@ def build_accounts_renderable(results: list[AccountUsage]) -> Text:
     if not results:
         return Text.from_markup(
             "[dim]No accounts added yet. Run:[/dim]  "
-            "tracker add claude|grok|codex  [dim]or[/dim]  tracker add <api_key>"
+            "tracker add claude|grok|codex|zai  [dim]or[/dim]  tracker add <api_key>"
         )
 
     # Group by provider
@@ -444,7 +486,7 @@ def build_accounts_renderable(results: list[AccountUsage]) -> Text:
         by_provider.setdefault(au.provider, []).append(au)
 
     lines: list[Text] = []
-    provider_order = ["claude", "grok", "codex", "gemini", "openai"]
+    provider_order = ["claude", "grok", "codex", "gemini", "openai", "zai"]
     # Include any unknown providers at the end
     for p in by_provider:
         if p not in provider_order:
@@ -550,7 +592,7 @@ def _best_account(results: list[AccountUsage]) -> AccountUsage | None:
 def render_status(results: list[AccountUsage]) -> None:
     """One-line aggregate summary."""
     parts: list[str] = []
-    for provider in ("claude", "grok", "codex", "gemini", "openai"):
+    for provider in ("claude", "grok", "codex", "gemini", "openai", "zai"):
         n = sum(1 for r in results if r.provider == provider)
         if n:
             parts.append(f"{n} {_PROVIDER_LABELS.get(provider, provider)}")
