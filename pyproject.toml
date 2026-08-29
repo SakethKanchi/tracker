@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-quota-tracker"
-version = "0.2.2"
+version = "0.3.0"
 description = "See every AI subscription's remaining quota in one terminal command (Claude, Grok, Codex, Gemini, OpenAI, Z.ai)"
 readme = "README.md"
 license = "MIT"
@@ -56,7 +56,7 @@ Homepage = "https://github.com/SakethKanchi/tracker"
 Repository = "https://github.com/SakethKanchi/tracker"
 Issues = "https://github.com/SakethKanchi/tracker/issues"
 Documentation = "https://github.com/SakethKanchi/tracker#readme"
-Changelog = "https://github.com/SakethKanchi/tracker/blob/master/CHANGELOG.md"
+Changelog = "https://github.com/SakethKanchi/tracker/blob/main/CHANGELOG.md"
 
 [project.scripts]
 tracker = "tracker.cli:main"

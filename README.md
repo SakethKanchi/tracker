@@ -7,7 +7,7 @@ each account, checking usage, and logging out.
 
 [![CI](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/SakethKanchi/tracker/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/ai-quota-tracker.svg)](https://pypi.org/project/ai-quota-tracker/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/SakethKanchi/tracker/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/SakethKanchi/tracker/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 ---
@@ -34,7 +34,7 @@ you are not forced into a re-login loop.
 
 ## Screenshot
 
-![tracker list dashboard](https://raw.githubusercontent.com/SakethKanchi/tracker/master/docs/images/list.svg)
+![tracker list dashboard](https://raw.githubusercontent.com/SakethKanchi/tracker/main/docs/images/list.svg)
 
 ```
 Claude  (2)
@@ -251,7 +251,7 @@ tracker webhook --once   # smoke test
 tracker webhook          # long-running poller
 ```
 
-Full setup (including systemd user unit): **[docs/discord-webhook.md](https://github.com/SakethKanchi/tracker/blob/master/docs/discord-webhook.md)**.
+Full setup (including systemd user unit): **[docs/discord-webhook.md](https://github.com/SakethKanchi/tracker/blob/main/docs/discord-webhook.md)**.
 
 ## Data locations
 
@@ -261,14 +261,14 @@ Full setup (including systemd user unit): **[docs/discord-webhook.md](https://gi
 | `~/.local/share/tracker/tracker.db` | Usage history + backoff state |
 | `~/.config/tracker/webhook.json` | Discord webhook config |
 
-Credentials are **local only**. See [SECURITY.md](https://github.com/SakethKanchi/tracker/blob/master/SECURITY.md).
+Credentials are **local only**. See [SECURITY.md](https://github.com/SakethKanchi/tracker/blob/main/SECURITY.md).
 
 ## Architecture
 
 Provider collectors → SQLite → rich TUI (and optional Discord embed).
 
-Details: **[docs/architecture.md](https://github.com/SakethKanchi/tracker/blob/master/docs/architecture.md)**  
-Original design notes: [docs/superpowers/specs/2026-07-28-tracker-design.md](https://github.com/SakethKanchi/tracker/blob/master/docs/superpowers/specs/2026-07-28-tracker-design.md)
+Details: **[docs/architecture.md](https://github.com/SakethKanchi/tracker/blob/main/docs/architecture.md)**  
+Original design notes: [docs/superpowers/specs/2026-07-28-tracker-design.md](https://github.com/SakethKanchi/tracker/blob/main/docs/superpowers/specs/2026-07-28-tracker-design.md)
 
 ## Prior art
 
@@ -312,7 +312,7 @@ package are still `tracker`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](https://github.com/SakethKanchi/tracker/blob/master/CONTRIBUTING.md). Bug reports welcome — please redact
+See [CONTRIBUTING.md](https://github.com/SakethKanchi/tracker/blob/main/CONTRIBUTING.md). Bug reports welcome — please redact
 emails, tokens, and webhook URLs.
 
 ```bash
@@ -322,7 +322,7 @@ PYTHONPATH=src python scripts/generate_screenshots.py
 
 ## License
 
-[MIT](https://github.com/SakethKanchi/tracker/blob/master/LICENSE) © 2026 sakethkanchi
+[MIT](https://github.com/SakethKanchi/tracker/blob/main/LICENSE) © 2026 sakethkanchi
 
 ## Disclaimer
 

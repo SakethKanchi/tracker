@@ -1,7 +1,8 @@
 # Contributing
 
 Thanks for helping improve **tracker**. This project stays small on purpose:
-read-only multi-account usage observability for Claude, Grok, Codex, Gemini, and OpenAI.
+read-only multi-account usage observability for Claude, Grok, Codex, Gemini,
+OpenAI, and Z.ai.
 
 ## Setup
 
@@ -49,7 +50,7 @@ database at `~/.local/share/tracker/tracker.db`.
 src/tracker/
   cli.py            # entrypoint
   usage.py          # collect_all / backoff
-  providers/        # claude.py, grok.py, codex.py, gemini.py, apikeys.py
+  providers/        # claude.py, grok.py, codex.py, gemini.py, zai.py, apikeys.py
   tui.py            # terminal rendering
   bot.py            # Discord webhook poller
   store.py          # SQLite
@@ -60,7 +61,7 @@ scripts/            # screenshot generator, helpers
 
 ## Making a change
 
-1. Branch from `master` (or `main` once renamed).
+1. Branch from `main`.
 2. Fix or feature in the smallest diff that works.
 3. Manually smoke-test:
    ```bash
@@ -81,7 +82,7 @@ Include:
 
 - OS + Python version
 - Command you ran
-- Provider involved (`claude` / `grok` / `codex` / `gemini` / `openai`)
+- Provider involved (`claude` / `grok` / `codex` / `gemini` / `openai` / `zai`)
 - Sanitized output (redact emails, tokens, webhook URLs)
 
 ## Code of conduct
@@ -115,8 +116,8 @@ pending publisher":
 2. Add a `CHANGELOG.md` entry.
 3. Commit, then tag and push:
    ```bash
-   git tag v0.2.2          # must match pyproject version
-   git push origin v0.2.2
+   git tag v0.3.0          # must match pyproject version
+   git push origin v0.3.0
    ```
 4. The workflow builds, runs `twine check --strict`, installs the wheel into a
    clean venv and smoke-tests the CLI, verifies tag == version, then publishes.
@@ -143,9 +144,9 @@ Nothing is uploaded when this happens, so the version is **not** burned: delete
 the tag and re-push it after finishing the setup.
 
 ```bash
-git push --delete origin v0.2.2 && git tag -d v0.2.2
+git push --delete origin v0.3.0 && git tag -d v0.3.0
 # ...register the publisher, then:
-git tag v0.2.2 && git push origin v0.2.2
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
 **API-token alternative.** If you prefer a token over trusted publishing, create

@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-08-29
 
 ### Added
 
@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or an account id. Matching is case-insensitive and exact — a partial string
   is a miss (an id prefix of 8+ chars excepted), and the error lists the
   available `provider:label` pairs with their short ids.
+- The default branch is now **`main`** (was `master`). GitHub redirects the old
+  name, but README, `pyproject.toml`, and the CI trigger point at `main`.
 
 ### Fixed
 
