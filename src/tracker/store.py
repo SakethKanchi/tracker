@@ -78,8 +78,30 @@ def connect() -> sqlite3.Connection:
     _dedupe_token_usage(conn)
     conn.executescript(_SCHEMA)
     _migrate_accounts_provider_check(conn)
+    _prune_orphans(conn)
     paths.db_path().chmod(0o600)
     return conn
+
+
+def _prune_orphans(conn: sqlite3.Connection) -> None:
+    """Drop child rows whose account is gone.
+
+    Earlier ``remove_account`` deleted only the accounts row and relied on a
+    cascade that was not always armed, so existing databases hold usage and
+    fetch_state rows for accounts the user removed. Those keep a deleted
+    account's history alive and let a stale backoff apply to a re-added
+    account, so clear them on connect. The probe is a single indexed row read
+    per table, and after the first run there is nothing to delete.
+    """
+    for table in _ACCOUNT_CHILD_TABLES:
+        orphan = conn.execute(
+            f"SELECT 1 FROM {table}"
+            " WHERE account_id NOT IN (SELECT id FROM accounts) LIMIT 1"
+        ).fetchone()
+        if orphan:
+            conn.execute(
+                f"DELETE FROM {table} WHERE account_id NOT IN (SELECT id FROM accounts)"
+            )
 
 
 def _dedupe_token_usage(conn: sqlite3.Connection) -> None:
@@ -215,47 +237,90 @@ def list_accounts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def _looks_like_id(sel: str) -> bool:
+    """True when *sel* could be an account uuid or a long-enough prefix of one.
+
+    Gating the id tier on this keeps a short human label from ever being
+    interpreted as an id, and 8 hex chars of a uuid4 is specific enough that a
+    prefix match is not the "substring guessing" the other tiers forbid.
+    """
+    return len(sel) >= 8 and all(c in "0123456789abcdef-" for c in sel)
+
+
 def find_accounts(conn: sqlite3.Connection, selector: str) -> list[sqlite3.Row]:
     """Resolve a CLI account selector to the active accounts it names.
 
-    A selector is a label, a provider name, or ``provider:label``. Labels are
-    not unique — two providers routinely share one email — so this returns
-    every match and lets the caller decide whether an ambiguous selector is
-    acceptable. Matching is case-insensitive but exact: no substring guessing,
-    so a selector never silently hits an account the user did not mean.
+    A selector is an account id (or a unique id prefix, 8+ chars), a label, an
+    email, a provider name, or ``provider:label``. Labels are not unique — two
+    providers routinely share one email, and nothing stops two accounts of the
+    same provider from sharing one either — so this returns every match and
+    lets the caller decide whether an ambiguous selector is acceptable.
+    Matching is case-insensitive but exact: no substring guessing, so a
+    selector never silently hits an account the user did not mean.
+
+    Tiers are tried in order and the first one that matches wins: id →
+    ``provider:name`` → label/email → provider. The id tier exists because it
+    is the only way to name one of two accounts that share provider *and*
+    label; label and email share a tier so a collision between them surfaces
+    as ambiguity instead of one silently shadowing the other.
     """
     sel = selector.strip().lower()
     if not sel:
         return []
 
-    provider, sep, label = sel.partition(":")
-    if sep and label:
+    def q(where: str, params: tuple) -> list[sqlite3.Row]:
         return conn.execute(
-            "SELECT * FROM accounts WHERE is_active=1"
-            " AND lower(provider)=? AND lower(label)=? ORDER BY provider, label",
-            (provider, label),
+            f"SELECT * FROM accounts WHERE is_active=1 AND ({where})"
+            " ORDER BY provider, label",
+            params,
         ).fetchall()
 
-    rows = conn.execute(
-        "SELECT * FROM accounts WHERE is_active=1 AND lower(label)=?"
-        " ORDER BY provider, label",
-        (sel,),
-    ).fetchall()
+    if _looks_like_id(sel):
+        rows = q("lower(id)=?", (sel,)) or q("lower(id) LIKE ?", (sel + "%",))
+        if rows:
+            return rows
+
+    provider, sep, name = sel.partition(":")
+    if sep and name:
+        return q(
+            "lower(provider)=? AND (lower(label)=? OR lower(email)=?)",
+            (provider, name, name),
+        )
+
+    rows = q("lower(label)=? OR lower(email)=?", (sel, sel))
     if rows:
         return rows
-    return conn.execute(
-        "SELECT * FROM accounts WHERE is_active=1 AND lower(provider)=?"
-        " ORDER BY provider, label",
-        (sel,),
-    ).fetchall()
+    return q("lower(provider)=?", (sel,))
 
 
 def get_account(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
 
 
+# Every table keyed by account_id. Kept next to remove_account because that is
+# the only place that has to know the full set.
+_ACCOUNT_CHILD_TABLES = ("usage_samples", "token_usage", "rate_limit_events", "fetch_state")
+
+
 def remove_account(conn: sqlite3.Connection, account_id: str) -> None:
-    conn.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+    """Delete an account and every row that belongs to it, atomically.
+
+    The child tables declare ON DELETE CASCADE, but that only fires while
+    ``PRAGMA foreign_keys`` is on — it is per-connection, off by default, and
+    the table-rebuild migrations above turn it off. Databases in the wild
+    already carry orphan rows from removals that ran without it, so the
+    children are deleted explicitly rather than trusted to cascade.
+    """
+    conn.execute("BEGIN")
+    try:
+        for table in _ACCOUNT_CHILD_TABLES:
+            conn.execute(f"DELETE FROM {table} WHERE account_id=?", (account_id,))
+        conn.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
 
 def find_by_provider_account_id(
     conn: sqlite3.Connection, provider: str, provider_account_id: str

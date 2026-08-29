@@ -40,7 +40,7 @@ refreshes (required for Grok and Codex single-use refresh tokens).
 | Module | Role |
 |--------|------|
 | `cli.py` | argparse entrypoint (`add`, `list`, `sync`, `tokens`, `status`, `remove`, `log`, `webhook`) |
-| `store.py` | SQLite schema + CRUD + provider CHECK migration |
+| `store.py` | SQLite schema + CRUD + migrations; owns selector resolution and whole-account deletion |
 | `credentials.py` | import/write/delete per-account credential blobs (mode `0600`) |
 | `usage.py` | refresh-if-stale collection, 429 backoff, `AccountUsage` rows |
 | `providers/claude.py` | OAuth refresh, profile, live usage API |

@@ -9,12 +9,13 @@ Usage:
   tracker sync [--label SEL]      # force-refresh usage
   tracker tokens [--since]        # historical token/cost report
   tracker status                  # one-line aggregate
-  tracker remove <provider|label> # drop an account
+  tracker remove <selector>...    # drop one or more accounts
   tracker log <provider> <label> --msgs N --resets-in HhMm  # manual entry
 
-Commands that name an account take a *selector*: a label, a provider name, or
-`provider:label`. Labels are not unique (one email often has both a Grok and a
-Codex account), so an ambiguous selector is reported instead of guessed.
+Commands that name an account take a *selector*: a label, an email, a provider
+name, `provider:label`, or an account id. Labels are not unique (one email
+often has both a Grok and a Codex account), so an ambiguous selector is
+reported instead of guessed.
 """
 
 from __future__ import annotations
@@ -416,20 +417,24 @@ def _describe(account) -> str:
     return f"{account['provider']}:{account['label']}"
 
 
-def _resolve_accounts(conn, selector: str) -> list:
-    """Accounts named by *selector*, or [] after printing what went wrong."""
-    matches = store.find_accounts(conn, selector)
-    if matches:
-        return matches
+def _report_no_match(conn, selector: str) -> None:
+    """Explain a selector that named nothing, and list what would have worked."""
     print(f"  error: no account matches '{selector}'")
     known = store.list_accounts(conn)
     if not known:
         print(f"  no accounts yet — run: tracker add {'|'.join(CLI_PROVIDERS)}")
-        return []
-    print("  known accounts (use a provider, a label, or provider:label):")
+        return
+    print("  known accounts (use a provider, a label, provider:label, or an id):")
     for row in known:
-        print(f"    {_describe(row)}")
-    return []
+        print(f"    {_describe(row):<34}  id {row['id'][:8]}")
+
+
+def _resolve_accounts(conn, selector: str) -> list:
+    """Accounts named by *selector*, or [] after printing what went wrong."""
+    matches = store.find_accounts(conn, selector)
+    if not matches:
+        _report_no_match(conn, selector)
+    return matches
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -485,21 +490,42 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_remove(args: argparse.Namespace) -> int:
     conn = store.connect()
-    matches = _resolve_accounts(conn, args.selector)
-    if not matches:
-        return 1
-    if len(matches) > 1 and not args.all:
-        print(f"  error: '{args.selector}' matches {len(matches)} accounts:")
+
+    # Resolve every selector before deleting anything: a destructive command
+    # that half-ran is worse than one that refused, and the user needs to see
+    # which selector was the problem while their accounts are all still there.
+    targets: dict[str, object] = {}
+    unresolved = False
+    for selector in args.selectors:
+        matches = store.find_accounts(conn, selector)
+        if not matches:
+            _report_no_match(conn, selector)
+            unresolved = True
+            continue
+        if len(matches) > 1 and not args.all:
+            print(f"  error: '{selector}' matches {len(matches)} accounts:")
+            for row in matches:
+                print(f"    {_describe(row):<34}  id {row['id'][:8]}")
+            print("  name one of those (label, provider:label, or id), "
+                  "or pass --all to remove every match")
+            unresolved = True
+            continue
         for row in matches:
-            print(f"    {_describe(row)}")
-        print("  name one of those, or pass --all to remove every match")
+            targets[row["id"]] = row  # dedupes selectors that overlap
+
+    if unresolved:
+        print("  nothing removed")
         return 1
 
-    for account in matches:
-        credentials.delete_credential(account["id"])
+    failed = False
+    for account in targets.values():
+        cred_error = credentials.delete_credential(account["id"])
         store.remove_account(conn, account["id"])
-        print(f"  removed {account['provider']} account: {account['label']}")
-    return 0
+        print(f"  removed {_describe(account)}")
+        if cred_error:
+            print(f"    warning: credential file still on disk: {cred_error}")
+            failed = True
+    return 1 if failed else 0
 
 
 def cmd_log(args: argparse.Namespace) -> int:
@@ -536,12 +562,50 @@ def cmd_webhook(args: argparse.Namespace) -> int:
     return bot.run_webhook(once=args.once)
 
 
+def _epilog(*examples: str) -> str:
+    """An argparse epilog listing example invocations.
+
+    An empty string is a blank separator line, not an indented one — argparse
+    prints the epilog verbatim, so a stray indent is trailing whitespace.
+    """
+    return "examples:\n" + "\n".join(f"  {e}" if e else "" for e in examples)
+
+
+def _subcommand(sub, name: str, summary: str, *examples: str):
+    """Add a subcommand whose ``--help`` ends in a worked-example block.
+
+    ``RawDescriptionHelpFormatter`` is required or argparse reflows the epilog
+    into a paragraph and the examples stop being copy-pasteable.
+    """
+    return sub.add_parser(
+        name,
+        help=summary,
+        description=summary,
+        epilog=_epilog(*examples),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     from . import __version__
 
     parser = argparse.ArgumentParser(
         prog="tracker",
         description="Unified usage tracker for Claude, Grok, Codex, Gemini, OpenAI, and Z.ai",
+        epilog=_epilog(
+            "tracker                                  dashboard for every account",
+            "tracker add codex                        import the ChatGPT login",
+            "tracker add sk-ant-...                   add an API key (provider auto-detected)",
+            "tracker status                           one-line summary: who has headroom",
+            "tracker sync                             force a fresh network pass",
+            "tracker remove codex                     drop an account",
+            "tracker tokens --since 7d                what the last week cost",
+            "",
+            "Commands that name an account take a selector: a label, an email, a",
+            "provider name, provider:label, or an account id. Run",
+            "`tracker <command> -h` for per-command examples.",
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "-V", "--version", action="version", version=f"tracker {__version__}",
@@ -555,9 +619,19 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     # add
-    p_add = sub.add_parser(
-        "add",
-        help=f"import a CLI credential ({'|'.join(CLI_PROVIDERS)}) or paste an API key",
+    p_add = _subcommand(
+        sub, "add",
+        f"import a CLI credential ({'|'.join(CLI_PROVIDERS)}) or paste an API key",
+        "tracker add claude              read ~/.claude/.credentials.json",
+        "tracker add codex               read ~/.codex/auth.json (ChatGPT login)",
+        "tracker add grok                read ~/.grok/auth.json",
+        "tracker add zai                 find a GLM Coding Plan key, else prompt",
+        "tracker add sk-ant-api03-...    paste a key; the provider is detected",
+        "tracker add AIza...             a Gemini key from AI Studio",
+        "",
+        "You are prompted for a label; the account's email is the default.",
+        "Re-running `add` for an account you already have refreshes its",
+        "credential in place instead of creating a duplicate.",
     )
     p_add.add_argument(
         "target",
@@ -565,7 +639,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # list (primary)
-    p_list = sub.add_parser("list", help="show all accounts' usage (primary command)")
+    p_list = _subcommand(
+        sub, "list", "show all accounts' usage (primary command)",
+        "tracker                         same thing — list is the default",
+        "tracker list                    refresh anything stale, then draw",
+        "tracker list --refresh          force a network pass first",
+        "tracker list --watch            live dashboard, redraw every 5s",
+        "tracker list --watch 30         live dashboard, redraw every 30s",
+    )
     p_list.add_argument("--refresh", action="store_true", help="force-refresh every account first")
     p_list.add_argument(
         "--watch",
@@ -578,16 +659,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # sync
-    p_sync = sub.add_parser("sync", help="force-refresh usage")
+    p_sync = _subcommand(
+        sub, "sync", "force-refresh usage",
+        "tracker sync                            every account",
+        "tracker sync --label codex              every codex account",
+        "tracker sync --label you@example.com    every account with that label",
+        "tracker sync --label codex:you@example.com",
+    )
     p_sync.add_argument(
         "--label",
         metavar="SELECTOR",
-        help="sync one account: a label, a provider name, or provider:label",
+        help="sync the accounts a selector names: a label, an email, "
+             "a provider name, provider:label, or an account id",
     )
     p_sync.add_argument("--all", action="store_true", help="sync all accounts (default)")
 
     # tokens
-    p_tokens = sub.add_parser("tokens", help="historical token/cost report")
+    p_tokens = _subcommand(
+        sub, "tokens", "historical token/cost report",
+        "tracker tokens                          everything on record",
+        "tracker tokens --since 24h              the last day",
+        "tracker tokens --since 7d               the last week",
+        "tracker tokens --since 2026-08-01       from a date",
+        "tracker tokens --provider grok          one provider only",
+        "",
+        "Built from local session transcripts, which today means Grok only",
+        "(~/.grok/sessions). Other providers expose no per-session history,",
+        "so they report nothing here.",
+    )
     p_tokens.add_argument("--since", help="time filter: '7d', '24h', or ISO date")
     p_tokens.add_argument(
         "--provider",
@@ -596,23 +695,51 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # status
-    sub.add_parser("status", help="one-line aggregate summary")
+    _subcommand(
+        sub, "status", "one-line aggregate summary",
+        "tracker status                  per-provider counts, worst window,",
+        "                                and which account has the most headroom",
+    )
 
     # remove
-    p_remove = sub.add_parser("remove", help="drop an account")
+    p_remove = _subcommand(
+        sub, "remove", "drop one or more accounts",
+        "tracker remove codex                    by provider",
+        "tracker remove you@example.com          by label or email",
+        "tracker remove codex:you@example.com    when one email has two accounts",
+        "tracker remove 9f3c1a20                 by account id (or an 8+ char prefix)",
+        "tracker remove codex zai                several at once",
+        "tracker remove grok --all               every account that selector names",
+        "",
+        "An ambiguous selector is refused and the alternatives are listed with",
+        "their short ids. With several selectors, all of them are resolved",
+        "before anything is deleted: one bad selector removes nothing.",
+        "",
+        "Removal deletes the credential file, usage samples, token history,",
+        "rate-limit events and fetch state. It cannot be undone.",
+    )
     p_remove.add_argument(
-        "selector",
-        metavar="PROVIDER|LABEL",
-        help="account to drop: a label, a provider name, or provider:label",
+        "selectors",
+        nargs="+",
+        metavar="SELECTOR",
+        help="accounts to drop: a label, an email, a provider name, "
+             "provider:label, or an account id",
     )
     p_remove.add_argument(
         "--all",
         action="store_true",
-        help="remove every account the selector matches",
+        help="remove every account a selector matches instead of refusing",
     )
 
     # log
-    p_log = sub.add_parser("log", help="manual usage entry")
+    p_log = _subcommand(
+        sub, "log", "manual usage entry",
+        "tracker log claude fundflow --msgs 40 --resets-in 1h30m",
+        "tracker log grok you@example.com --tokens 250000",
+        "",
+        "For providers or windows with no API to read. Takes provider and",
+        "label as separate arguments, not a selector.",
+    )
     p_log.add_argument("provider", choices=list(ALL_PROVIDERS))
     p_log.add_argument("label")
     p_log.add_argument("--msgs", type=int, help="message count")
@@ -620,7 +747,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--tokens", type=int, help="total tokens used")
 
     # webhook
-    p_webhook = sub.add_parser("webhook", help="run the Discord webhook poller")
+    p_webhook = _subcommand(
+        sub, "webhook", "run the Discord webhook poller",
+        "tracker webhook                 poll forever, editing one embed",
+        "tracker webhook --once          post/update once and exit (cron, testing)",
+        "",
+        "Reads ~/.config/tracker/webhook.json for the URL and interval.",
+    )
     p_webhook.add_argument("--once", action="store_true", help="post/update once and exit")
 
     return parser

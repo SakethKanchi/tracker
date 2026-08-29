@@ -175,10 +175,13 @@ tracker status         # one-line aggregate
 | `tracker sync` / `tracker sync --label SELECTOR` | Force-refresh (all, or everything a selector names) |
 | `tracker tokens [--since 7d] [--provider …]` | Historical token report |
 | `tracker status` | Compact aggregate line |
-| `tracker remove <PROVIDER\|LABEL>` | Drop account + credential file |
+| `tracker remove <SELECTOR>...` | Drop accounts + their credential files and usage history |
 | `tracker log PROVIDER LABEL --msgs N --resets-in 1h30m` | Manual usage sample |
 | `tracker webhook` / `tracker webhook --once` | Discord channel dashboard |
 | `tracker -V` | Version |
+
+`tracker -h` and every `tracker <command> -h` end in a block of
+copy-pasteable examples, so the reference is in the tool as well as here.
 
 ## Providers
 
@@ -193,19 +196,28 @@ tracker status         # one-line aggregate
 
 ### Naming an account
 
-`remove`, `sync --label`, and `log` take a **selector**: a label, a provider
-name, or `provider:label`.
+`remove`, `sync --label`, and `log` take a **selector**: a label, an email, a
+provider name, `provider:label`, or an account id (in full, or a unique prefix
+of 8+ characters).
 
 ```bash
 tracker remove codex                    # by provider
-tracker remove you@example.com          # by label
+tracker remove you@example.com          # by label or email
 tracker remove codex:you@example.com    # when one email has two accounts
-tracker remove you@example.com --all    # every account with that label
+tracker remove 9f3c1a20                 # by account id, shown in error output
+tracker remove codex zai                # several at once
+tracker remove you@example.com --all    # every account that selector names
 ```
 
 Labels are not unique — one email commonly has both a Grok and a Codex
-account — so an ambiguous selector is reported with the exact alternatives
-instead of silently picking one.
+account — so an ambiguous selector is reported with the exact alternatives and
+their short ids instead of silently picking one. With several selectors, all of
+them are resolved before anything is deleted: one bad selector aborts the whole
+command rather than half-removing your accounts.
+
+Removing an account deletes its credential file, usage samples, token history,
+rate-limit events and fetch state. It is not reversible, and re-adding the
+account starts its history over.
 
 ### Codex auth notes
 
@@ -274,8 +286,9 @@ accounts (that can come later on top of the same store).
 | Codex says `refresh_token_reused` | `~/.codex/auth.json` was copied between machines and both sides refresh | Re-run the Codex ChatGPT login on one machine only, then re-add |
 | A row shows `backing-off` | The provider returned HTTP 429; tracker is respecting the window | Wait it out; the bars shown are last-known, not stale-forever |
 | Gemini/OpenAI show only `key valid` | Those platforms expose no public per-key usage percentage | Expected — key health and model access is all that's available |
-| `no account matches 'X'` | `remove`/`sync`/`log` take a label, a provider, or `provider:label` — never a partial string | Pick one of the `provider:label` lines it prints |
-| `'X' matches 2 accounts` | Two providers share that label (same email) | Use `provider:label`, or `--all` to remove both |
+| `no account matches 'X'` | Selectors are exact — a label, email, provider, `provider:label`, or account id, never a partial string | Pick one of the lines it prints |
+| `'X' matches 2 accounts` | Two accounts share that label or email (usually one email signed into two services) | Use `provider:label` or the short id it prints, or `--all` to remove every match |
+| A code change to `remove` (or anything else) has no effect | `tracker` on `PATH` is a snapshot install, not your checkout — `head -1 $(which tracker)` points at a `uv tool` or pipx environment | `uv tool install --force --editable .` from the checkout, then restart any `tracker webhook` service |
 | Z.ai row says `invalid z.ai API key` | The GLM Coding Plan key was rotated, or it belongs to the other platform (`api.z.ai` vs `open.bigmodel.cn`) | `tracker add zai` again with the current key |
 | `tracker: command not found` | Installed into a venv that is not on `PATH` | `uv tool install .`, or use `PYTHONPATH=src python -m tracker.cli` |
 | Bars look wrong after an upgrade | Old samples in SQLite | `tracker sync` to force a fresh network pass |

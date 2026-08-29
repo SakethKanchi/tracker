@@ -47,11 +47,21 @@ def read_credential(account_id: str) -> dict[str, Any] | None:
         return None
 
 
-def delete_credential(account_id: str) -> None:
+def delete_credential(account_id: str) -> str | None:
+    """Delete a per-account credential file; return an error string on failure.
+
+    Returns None when the file is gone (deleted now, or never there). A caller
+    removing an account must not report success while the secret survives on
+    disk, so an undeletable file is reported rather than swallowed.
+    """
+    path = cred_path(account_id)
     try:
-        os.unlink(cred_path(account_id))
+        os.unlink(path)
     except FileNotFoundError:
-        pass
+        return None
+    except OSError as e:
+        return f"{path}: {e.strerror or e}"
+    return None
 
 
 def _atomic_write_json(path: str, data: dict[str, Any]) -> None:

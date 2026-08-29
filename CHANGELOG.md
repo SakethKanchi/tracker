@@ -19,13 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both platforms are supported (`api.z.ai` and `open.bigmodel.cn`); which one a
   key belongs to is detected at add time and stored with the credential.
 - `tracker remove <selector> --all` removes every account a selector matches.
+- **`tracker remove` takes several selectors at once** —
+  `tracker remove codex grok:me@example.com`. Every selector is resolved before
+  anything is deleted, so an unknown or ambiguous one aborts the whole command
+  with your accounts untouched instead of half-removing them.
+- **An account id is a selector**, in full or as a unique prefix of 8+ chars
+  (`tracker remove 9f3c1a20`). Nothing stops two accounts of the same provider
+  from sharing a label, and the id is then the only way to name just one of
+  them; the ambiguity error lists the short id of every match.
+- **An email is a selector.** Accounts whose label is not their email (an
+  account labelled `work`, say) can now be named by the email as well.
+- **Worked examples in `--help`.** `tracker -h` and every
+  `tracker <command> -h` end in an `examples:` block — real invocations, plus
+  the caveats that used to live only in the README (what a selector is, that
+  `remove` is irreversible, that token history is Grok-only).
 
 ### Changed
 
 - **`remove`, `sync --label`, and `log` now take a selector**, not just a label:
-  a label, a provider name (`tracker remove codex`), or `provider:label`.
-  Matching is case-insensitive and exact — a partial string is a miss, and the
-  error lists the available `provider:label` pairs.
+  a label, an email, a provider name (`tracker remove codex`), `provider:label`,
+  or an account id. Matching is case-insensitive and exact — a partial string
+  is a miss (an id prefix of 8+ chars excepted), and the error lists the
+  available `provider:label` pairs with their short ids.
 
 ### Fixed
 
@@ -38,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matches: `remove` refuses an ambiguous one instead of guessing, and `sync`
   refreshes each. The same fix covers the initial collection after
   `tracker add`, which now looks the new account up by id.
+- **`remove` left an account's usage history in the database.** The child
+  tables cascade from `accounts`, but only while `PRAGMA foreign_keys` is on —
+  it is per-connection, off by default, and the schema migrations switch it
+  off. Removal now deletes usage samples, token usage, rate-limit events and
+  fetch state explicitly, in one transaction, and `connect()` clears the
+  orphans older removals left behind. Stale `fetch_state` rows were the worst
+  of it: a re-added account inherited the removed one's backoff.
+- **`remove` reported success even when the credential file survived.**
+  `delete_credential` swallowed every error, so an unwritable credentials
+  directory left an API key or OAuth refresh token on disk under an
+  account that no longer existed. Removal now reports the file it could not
+  delete and exits non-zero.
 
 ## [0.2.2] — 2026-08-16
 
