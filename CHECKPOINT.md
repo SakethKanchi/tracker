@@ -2,8 +2,9 @@
 
 ## Now
 
-`tracker remove` is fixed, the fix is live on this machine, and the work is
-committed and pushed to `origin/master`. Working tree clean; nothing in flight.
+**0.3.0 is released.** Live on PyPI as `ai-quota-tracker==0.3.0`, tagged
+`v0.3.0`, GitHub Release published, default branch renamed `master` → `main`.
+Working tree clean, `main` in sync with `origin/main`; nothing in flight.
 
 The real reason remove "still didn't work" was **not** in the code: `tracker` on
 `PATH` was a `uv tool install` snapshot of PyPI `ai-quota-tracker` 0.2.2, so the
@@ -16,6 +17,12 @@ The live store still has all 4 accounts, untouched — including the duplicate
 Grok account (a second Grok login under a different email, currently blocked).
 `tracker remove grok` lists both with their short ids; name the one you want by
 `grok:<label>` or by id.
+
+Release facts worth not re-deriving: publishing is a `v*` tag push →
+`publish.yml` → PyPI Trusted Publishing (OIDC, `pypi` environment). A manual
+`workflow_dispatch` run is a dry run and never uploads. The tag must match
+`pyproject.toml`'s version or the build job fails. Both version strings
+(`pyproject.toml` and `src/tracker/__init__.py`) have to move together.
 
 ## What changed
 
@@ -41,6 +48,18 @@ Grok account (a second Grok login under a different email, currently blocked).
   `_subcommand` in `cli.py` with `RawDescriptionHelpFormatter`.
 - Test fixtures and doc examples use synthetic account uuids; the real store's
   ids and emails are deliberately not committed to this public repo.
+- Version `0.2.2` → **`0.3.0`** in `pyproject.toml` and
+  `src/tracker/__init__.py`; the `## [Unreleased]` heading became
+  `## [0.3.0] — 2026-08-29`.
+- Branch rename used the GitHub API
+  (`POST repos/.../branches/master/rename`), which retargets open PRs and
+  leaves a redirect. Then `git branch -m`, `--set-upstream-to=origin/main`,
+  `git remote set-head origin -a`. Followed the refs through: `ci.yml` trigger,
+  7 README `blob/master` links, the README raw image URL, `pyproject.toml`'s
+  Changelog URL, `CONTRIBUTING.md`.
+- `CONTRIBUTING.md` release examples now say `v0.3.0`, and its provider lists
+  (intro, project layout, bug-report template) picked up Z.ai, which they had
+  missed since the provider was added.
 
 ## Locked decisions
 
@@ -58,8 +77,11 @@ Grok account (a second Grok login under a different email, currently blocked).
   bug invisible for a whole release. Cost: `tracker` (and the bot service) now
   depend on `~/Code/tracker` existing. Revert with
   `uv tool install --force ai-quota-tracker`.
-- Version stays `0.2.2`; everything sits under `## [Unreleased]`. Bumping and
-  releasing is the user's call.
+- **`0.3.0`, not `0.2.3`.** A new provider and new selector forms are added
+  surface, not just repairs, so SemVer says minor. Next release starts a fresh
+  `## [Unreleased]` heading in `CHANGELOG.md`.
+- **`main` is the default branch.** Renamed through the GitHub API so the old
+  name redirects; do not recreate `master`.
 
 ## Verification performed
 
@@ -80,10 +102,21 @@ Grok account (a second Grok login under a different email, currently blocked).
   `connect()` pruned the pre-existing orphan `fetch_state` row (1 → 0),
   `tracker status` and `tracker sync --label codex` still work, and
   `tracker-bot.service` is active on the new code.
+- Release dry run **before** tagging, replicating `publish.yml` locally:
+  `python -m build`, `twine check --strict` (both artifacts PASSED), install
+  the wheel into a clean venv, `tracker --version` → `0.3.0`, and the
+  tag-vs-`pyproject` version comparison.
+- After the tag push: CI green on `main` (3.11–3.13), `Publish to PyPI` green,
+  `https://pypi.org/pypi/ai-quota-tracker/json` reports `0.3.0` latest with
+  both sdist and wheel.
+- Installed `ai-quota-tracker==0.3.0` from PyPI into a clean venv:
+  `tracker --version` → `0.3.0`, `tracker remove -h` shows the examples block.
+  The local editable install also reports `0.3.0`.
 
 ## Not done / deliberately out of scope
 
-- No version bump, no PyPI release, no commit.
+- **Screenshots were not regenerated.** `tui.py` is untouched, so
+  `docs/images/*` still match; regenerate only if rendering changes.
 - **`tracker add grok` created a second grok account instead of updating the
   existing one** when the live `~/.grok/auth.json` held a different user. That
   is why there was a duplicate to remove. Dedupe on add is a separate fix —
